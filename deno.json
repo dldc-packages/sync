@@ -13,6 +13,7 @@
     "@dldc/zendb-db-sqlite": "jsr:@dldc/zendb-db-sqlite@^5.1.0",
     "@dldc/zenjson": "jsr:@dldc/zenjson@^3.0.1",
     "@std/msgpack": "jsr:@std/msgpack@^1.0.3",
+    "@std/expect": "jsr:@std/expect@^1.0.13",
     "@valibot/valibot": "jsr:@valibot/valibot@^1.4.2"
   },
   "tasks": {
