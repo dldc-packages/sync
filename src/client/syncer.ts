@@ -1,8 +1,8 @@
-import { createQueue } from "../../shared/queue.ts";
+import { createQueue } from "../shared/queue.ts";
 import type { ApiClient } from "./api.ts";
 import type { Store } from "./store.ts";
 
-interface SyncerParams<Action> {
+export interface SyncerParams<Action> {
   apiClient: ApiClient<Action>;
   clientId: string;
   signal: AbortSignal;

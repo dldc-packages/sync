@@ -4,8 +4,8 @@ import {
   createHLC,
   parseHLC,
   serializeHLC,
-} from "../../shared/hlc.ts";
-import { sanitize } from "../../shared/transport/zenjson.ts";
+} from "../shared/hlc.ts";
+import { sanitize } from "../shared/transport/zenjson.ts";
 import { withLock } from "./lock.ts";
 import type { TRestoreContext, TSanitizeContext } from "./types.ts";
 

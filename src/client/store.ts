@@ -1,4 +1,4 @@
-import type { TStoreReducer } from "../../shared/types.ts";
+import type { TStoreReducer } from "../shared/types.ts";
 import type { DispatchResult, OpfsClient, PendingAction } from "./opfs.ts";
 
 export interface Store<Action> {
@@ -36,7 +36,7 @@ export function createStore<Action, Context>(
     onDatabase,
     onStateChange,
   }: StoreParams<Action, Context>,
-) {
+): Store<Action> {
   let serverContent: Uint8Array = initialDatabase;
   let serverVersion: string | null = initialServerVersion;
   let pending: PendingAction<Action>[] = initialPending;

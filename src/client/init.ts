@@ -1,4 +1,4 @@
-import type { TGetStoreReducer, TStoreReducer } from "../../shared/types.ts";
+import type { TGetStoreReducer, TStoreReducer } from "../shared/types.ts";
 import { UnauthorizedError } from "./errors.ts";
 import {
   createOpfsClient,

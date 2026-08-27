@@ -1,4 +1,4 @@
-import { createQueue } from "../../shared/queue.ts";
+import { createQueue } from "../shared/queue.ts";
 import type { OpfsClient } from "./opfs.ts";
 import type { Sender } from "./sender.ts";
 import type { Store } from "./store.ts";

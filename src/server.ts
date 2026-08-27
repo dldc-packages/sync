@@ -1,8 +1,13 @@
-export { createFileStore } from "./server/fileStore.ts";
-export type {
-  TFileStore,
-  TFileStoreEvent,
-  TStoreUpdateContext,
+export {
+  createFileStore,
+  type FileStoreParams,
+  type TFileStore,
+  type TFileStoreEvent,
+  type TStoreUpdateContext,
 } from "./server/fileStore.ts";
-export { createStore } from "./server/store.ts";
-export type { TStore } from "./server/store.ts";
+export {
+  createStateDb,
+  type TStateDb,
+  type TStateDbParams,
+} from "./server/stateDb.ts";
+export { createStore, type StoreParams, type TStore } from "./server/store.ts";

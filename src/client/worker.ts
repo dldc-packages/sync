@@ -1,5 +1,5 @@
-import { restore, sanitize } from "../../shared/transport/zenjson.ts";
-import type { TGetStoreReducer } from "../../shared/types.ts";
+import { restore, sanitize } from "../shared/transport/zenjson.ts";
+import type { TGetStoreReducer } from "../shared/types.ts";
 import { createApiClient } from "./api.ts";
 import { createDispatcher } from "./dispatcher.ts";
 import { init } from "./init.ts";

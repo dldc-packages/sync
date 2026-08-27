@@ -30,7 +30,7 @@ export interface StoreParams<Action, Context> {
   getReducer: TGetStoreReducer<Action, Context>;
 }
 
-export const vDispatchRequest = v.object({
+const vDispatchRequest = v.object({
   action: v.any(),
   ts: v.string(),
 });

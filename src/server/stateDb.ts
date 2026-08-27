@@ -10,15 +10,6 @@ import {
 import { DbSqliteDriver } from "@dldc/zendb-db-sqlite";
 import { compareHLC, parseHLC } from "../shared/hlc.ts";
 
-export function instantDt() {
-  return Datatype.create<Temporal.Instant, string>({
-    name: "instant",
-    serialize: (value) => value.toString(),
-    parse: (value) => Temporal.Instant.from(value),
-    type: "TEXT",
-  });
-}
-
 export interface TStateDb {
   getClientLastApplied: (clientId: string) => string | null;
   updateClientLastApplied: (clientId: string, ts: string) => boolean;
@@ -149,4 +140,13 @@ function baseColumns() {
     createdAt: Column.declare(instantDt()),
     updatedAt: Column.declare(instantDt()),
   } as const;
+}
+
+function instantDt() {
+  return Datatype.create<Temporal.Instant, string>({
+    name: "instant",
+    serialize: (value) => value.toString(),
+    parse: (value) => Temporal.Instant.from(value),
+    type: "TEXT",
+  });
 }

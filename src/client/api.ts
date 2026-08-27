@@ -2,8 +2,8 @@ import { signature } from "@dldc/librsync";
 import {
   fileSyncTransportReader,
   type TFileSyncMessage,
-} from "../../shared/transport/fileSync.ts";
-import { sanitize } from "../../shared/transport/zenjson.ts";
+} from "../shared/transport/fileSync.ts";
+import { sanitize } from "../shared/transport/zenjson.ts";
 import { assertOk, UnauthorizedError } from "./errors.ts";
 
 export interface ApiClient<Action> {

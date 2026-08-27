@@ -3,7 +3,7 @@ import {
   type TSubscriptionCallback,
   type TUnsubscribe,
 } from "@dldc/pubsub";
-import { createDeferred, type TDeferred } from "../../shared/deferred.ts";
+import { createDeferred, type TDeferred } from "../shared/deferred.ts";
 import type { TDebugState } from "./opfs.ts";
 import { decodeMessage, encodeMessage } from "./transport.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";

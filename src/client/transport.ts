@@ -7,7 +7,7 @@ import {
   type restore as zenjsonRestore,
   type sanitize as zenjsonSanitize,
 } from "@dldc/zenjson";
-import { ALL_TYPES as ALL_TYPES_BASE } from "../../shared/transport/zenjson.ts";
+import { ALL_TYPES as ALL_TYPES_BASE } from "../shared/transport/zenjson.ts";
 
 const transferableKey = createTypedKey<Transferable[]>("transferable");
 
