@@ -1,9 +1,10 @@
 {
   "name": "@dldc/sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "exports": {
     "./client": "./src/client.ts",
-    "./server": "./src/server.ts"
+    "./server": "./src/server.ts",
+    "./shared": "./src/shared.ts"
   },
   "imports": {
     "@db/sqlite": "jsr:@db/sqlite@^0.13.0",
