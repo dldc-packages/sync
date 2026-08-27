@@ -36,11 +36,11 @@ const instantTypes: ICustomType<Temporal.Instant, string> = {
 };
 
 export const ALL_TYPES = [
-  ...defaultTypes,
   zonedDateTimeTypes,
   plainDateTypes,
   plainTimeTypes,
   instantTypes,
+  ...defaultTypes,
 ];
 
 export const restore: typeof zenjsonRestore = createRestore(ALL_TYPES);
