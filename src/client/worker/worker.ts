@@ -1,4 +1,5 @@
-import type { TStoreReducer } from "../../shared/types.ts";
+import { restore, sanitize } from "../../shared/transport/zenjson.ts";
+import type { TGetStoreReducer } from "../../shared/types.ts";
 import { createApiClient } from "./api.ts";
 import { createDispatcher } from "./dispatcher.ts";
 import { init } from "./init.ts";
@@ -23,10 +24,21 @@ export interface TWorkerEngine {
 }
 
 export interface TWorkerEngineParams<Action, Context> {
-  reducer: TStoreReducer<Action, Context>;
+  getReducer: TGetStoreReducer<Action, Context>;
+
+  /**
+   * Function to get the current context, the context must be transferable (i.e. structured cloneable) and should not contain any functions or non-serializable data.
+   */
   getContext: TGetContext<Context>;
-  sanitizeContext: TSanitizeContext<Context>;
-  restoreContext: TRestoreContext<Context>;
+  /**
+   * Convert the context to JSON serializable form for storage in OPFS.
+   * By default it will use the internal `zenjson` serializer, which can handle Date, undefined, some Temporal types.
+   */
+  sanitizeContext?: TSanitizeContext<Context>;
+  /**
+   * Convert the context from JSON serializable form to the original context type.
+   */
+  restoreContext?: TRestoreContext<Context>;
   syncPath: (clientId: string) => string;
   dispatchPath: (clientId: string) => string;
   crossTabDispatchChannelName: string;
@@ -40,12 +52,17 @@ export interface TWorkerEngineParams<Action, Context> {
   getContextTimeoutMs: number;
 }
 
+const DEFAULT_SANITIZE_CONTEXT: TSanitizeContext<any> = (context) =>
+  sanitize(context);
+const DEFAULT_RESTORE_CONTEXT: TRestoreContext<any> = (data) =>
+  Promise.resolve(restore(data));
+
 export function createWorkerEngine<Action, Context>(
   {
-    reducer,
+    getReducer,
     getContext,
-    restoreContext,
-    sanitizeContext,
+    restoreContext = DEFAULT_RESTORE_CONTEXT,
+    sanitizeContext = DEFAULT_SANITIZE_CONTEXT,
     syncPath,
     dispatchPath,
     reconnectBaseDelay,
@@ -136,6 +153,7 @@ export function createWorkerEngine<Action, Context>(
 
   async function main() {
     const initState = await init<Action, Context>({
+      getReducer,
       onNoContextError: () => {
         handleError(null, "Startup", "No context available");
       },
@@ -154,6 +172,7 @@ export function createWorkerEngine<Action, Context>(
     }
 
     const {
+      reducer,
       database,
       context,
       opfsClient,

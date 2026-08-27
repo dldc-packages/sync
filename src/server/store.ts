@@ -1,7 +1,7 @@
 import * as v from "@valibot/valibot";
 import { fileSyncTransportWriter } from "../shared/transport/fileSync.ts";
 import { restore } from "../shared/transport/zenjson.ts";
-import type { TStoreReducer } from "../shared/types.ts";
+import type { TGetStoreReducer } from "../shared/types.ts";
 import { createFileStore, type TStoreUpdateContext } from "./fileStore.ts";
 import { createStateDb } from "./stateDb.ts";
 
@@ -27,7 +27,7 @@ export interface StoreParams<Action, Context> {
   stateDatabasePath: string;
   filePath: string;
   actionSchema: v.GenericSchema<Action>;
-  reducer: TStoreReducer<Action, Context>;
+  getReducer: TGetStoreReducer<Action, Context>;
 }
 
 export const vDispatchRequest = v.object({
@@ -36,7 +36,7 @@ export const vDispatchRequest = v.object({
 });
 
 export async function createStore<Action, Context>(
-  { stateDatabasePath, filePath, reducer, actionSchema }: StoreParams<
+  { stateDatabasePath, filePath, getReducer, actionSchema }: StoreParams<
     Action,
     Context
   >,
@@ -47,6 +47,7 @@ export async function createStore<Action, Context>(
     getDbVersion: stateDb.getDbVersion,
     setDbVersion: stateDb.setDbVersion,
   });
+  const reducer = await getReducer();
 
   return {
     dispatch,
