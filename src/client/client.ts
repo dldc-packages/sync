@@ -3,9 +3,8 @@ import {
   type TSubscriptionCallback,
   type TUnsubscribe,
 } from "@dldc/pubsub";
-import type { TRestoreContext } from "@dldc/sync/shared/internal";
 import { createDeferred, type TDeferred } from "../shared/deferred.ts";
-import type { TSanitizeAction } from "../shared/types.ts";
+import type { TRestoreContext, TSanitizeAction } from "../shared/types.ts";
 import type { TDebugState } from "./opfs.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 

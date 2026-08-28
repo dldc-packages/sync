@@ -29,12 +29,3 @@ export type {
   TStreamWriter,
   UnionFromMap,
 } from "./stream.ts";
-export type {
-  TGetContext,
-  TGetStoreReducer,
-  TRestoreAction,
-  TRestoreContext,
-  TSanitizeAction,
-  TSanitizeContext,
-  TStoreReducer,
-} from "./types.ts";
