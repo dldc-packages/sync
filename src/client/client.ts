@@ -3,9 +3,10 @@ import {
   type TSubscriptionCallback,
   type TUnsubscribe,
 } from "@dldc/pubsub";
+import type { TRestoreContext } from "@dldc/sync/shared/internal";
 import { createDeferred, type TDeferred } from "../shared/deferred.ts";
+import type { TSanitizeAction } from "../shared/types.ts";
 import type { TDebugState } from "./opfs.ts";
-import { decodeMessage, encodeMessage } from "./transport.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export interface WorkerClient<Action, Context> {
@@ -35,8 +36,17 @@ interface TWorkerInternalState<Context> {
   debugState: TDebugState;
 }
 
+export interface TWorkerClientParams<Action, Context> {
+  worker: Worker;
+  sanitizeAction: TSanitizeAction<Action>;
+  restoreContext: TRestoreContext<Context>;
+}
+
 export function createWorkerClient<Action, Context>(
-  worker: Worker,
+  { worker, sanitizeAction, restoreContext }: TWorkerClientParams<
+    Action,
+    Context
+  >,
 ): WorkerClient<Action, Context> {
   const databaseSubscriptions = createSubscription<Uint8Array>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
@@ -49,7 +59,7 @@ export function createWorkerClient<Action, Context>(
     if (!message.kind) {
       return;
     }
-    handleOutMessage(decodeMessage(message) as TWorkerOutMessage<Context>);
+    handleOutMessage(message as TWorkerOutMessage);
   };
 
   return {
@@ -108,7 +118,10 @@ export function createWorkerClient<Action, Context>(
   }
 
   function dispatch(action: Action): void {
-    sendMessage({ kind: "Dispatch", action });
+    sendMessage({
+      kind: "Dispatch",
+      action: { _action: sanitizeAction(action) },
+    });
   }
 
   function clearError(id: string): void {
@@ -127,12 +140,11 @@ export function createWorkerClient<Action, Context>(
     sendMessage({ kind: "ForceRefresh" });
   }
 
-  function sendMessage(message: TWorkerInMessage<Action>): void {
-    const [data, transfer] = encodeMessage(message);
-    worker.postMessage(data, transfer);
+  function sendMessage(message: TWorkerInMessage): void {
+    worker.postMessage(message);
   }
 
-  function handleOutMessage(message: TWorkerOutMessage<Context>) {
+  function handleOutMessage(message: TWorkerOutMessage) {
     if (message.kind === "Ready") {
       if (isReady !== null) {
         isReady.resolve();
@@ -144,7 +156,7 @@ export function createWorkerClient<Action, Context>(
       state = {
         version: 1,
         database: new Uint8Array(message.database),
-        context: message.context,
+        context: restoreContext(message.context._context),
         debugState: { pendingCount: 0, errors: [] },
       };
       databaseSubscriptions.emit(state.database);

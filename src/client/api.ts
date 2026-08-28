@@ -2,11 +2,11 @@ import { signature } from "@dldc/librsync";
 import {
   fileSyncTransportReader,
   type TFileSyncMessage,
-} from "../shared/transport/fileSync.ts";
-import { sanitize } from "../shared/transport/zenjson.ts";
+} from "../shared/fileSync.ts";
 import { assertOk, UnauthorizedError } from "./errors.ts";
+import type { SanitizedAction } from "./opfs.ts";
 
-export interface ApiClient<Action> {
+export interface ApiClient {
   /**
    * Like EventSource but over POST with a binary body.
    *
@@ -24,7 +24,7 @@ export interface ApiClient<Action> {
 
   dispatchAction(
     clientId: string,
-    action: Action,
+    action: SanitizedAction,
     ts: string,
   ): Promise<void>;
 }
@@ -40,7 +40,7 @@ export interface ApiClientParams {
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 30_000;
 
-export function createApiClient<Action>(
+export function createApiClient(
   {
     reconnectBaseDelay = RECONNECT_BASE_DELAY,
     reconnectMaxDelay = RECONNECT_MAX_DELAY,
@@ -48,7 +48,7 @@ export function createApiClient<Action>(
     dispatchPath,
     onUnauthorized,
   }: ApiClientParams,
-): ApiClient<Action> {
+): ApiClient {
   return {
     sync,
     dispatchAction,
@@ -109,14 +109,14 @@ export function createApiClient<Action>(
     };
   }
 
-  async function dispatchAction<Action>(
+  async function dispatchAction(
     clientId: string,
-    action: Action,
+    action: SanitizedAction,
     ts: string,
   ): Promise<void> {
     const res = await fetch(dispatchPath(clientId), {
       method: "POST",
-      body: JSON.stringify(sanitize({ action, ts })),
+      body: JSON.stringify({ action: action._action, ts }),
       credentials: "include",
     });
     assertOk(res);

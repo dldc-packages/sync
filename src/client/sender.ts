@@ -1,19 +1,19 @@
 import type { ApiClient } from "./api.ts";
 import { UnauthorizedError } from "./errors.ts";
 import { withLock } from "./lock.ts";
-import type { OpfsClient, PendingAction } from "./opfs.ts";
+import type { OpfsClient, SanitizedPendingAction } from "./opfs.ts";
 
 export interface Sender {
   /** Wake up the send loop (e.g. after a dispatch added to pending). */
   wake(): void;
 }
 
-export interface SenderParams<Action, Context> {
-  apiClient: ApiClient<Action>;
-  opfsClient: OpfsClient<Action, Context>;
+export interface SenderParams {
+  apiClient: ApiClient;
+  opfsClient: OpfsClient;
   clientId: string;
   signal: AbortSignal;
-  onExhausted: (pending: PendingAction<Action>) => void;
+  onExhausted: (sanitizedPending: SanitizedPendingAction) => void;
   onUnauthorized?: () => void;
   sendLockName: string;
 }
@@ -39,7 +39,7 @@ const BACKOFF_MAX_ATTEMPTS = 10;
  * (HTTP 200) but not yet acked by sync, the sender won't re-send it on restart.
  * The server's `updateClientLastApplied` dedups in case of re-send anyway.
  */
-export function createSender<Action, Context>(
+export function createSender(
   {
     apiClient,
     clientId,
@@ -48,7 +48,7 @@ export function createSender<Action, Context>(
     opfsClient,
     signal,
     sendLockName,
-  }: SenderParams<Action, Context>,
+  }: SenderParams,
 ): Sender {
   let loopRunning = false;
 
@@ -83,16 +83,20 @@ export function createSender<Action, Context>(
   async function sendWithRetry(
     clientId: string,
     signal: AbortSignal,
-    onExhausted: (pending: PendingAction<Action>) => void,
+    onExhausted: (sanitizedPending: SanitizedPendingAction) => void,
   ): Promise<{ shouldContinue: boolean }> {
-    const pending = await opfsClient.getNextUnsentPending();
-    if (pending === null) return { shouldContinue: false };
+    const sanitizedPending = await opfsClient.getNextUnsentPending();
+    if (sanitizedPending === null) return { shouldContinue: false };
 
     for (let attempt = 0; attempt < BACKOFF_MAX_ATTEMPTS; attempt++) {
       if (signal.aborted) return { shouldContinue: false };
       try {
-        await apiClient.dispatchAction(clientId, pending.action, pending.ts);
-        await opfsClient.markPendingAsSent(pending.ts);
+        await apiClient.dispatchAction(
+          clientId,
+          sanitizedPending.action,
+          sanitizedPending.ts,
+        );
+        await opfsClient.markPendingAsSent(sanitizedPending.ts);
         return { shouldContinue: true };
       } catch (err) {
         if (err instanceof UnauthorizedError) {
@@ -105,8 +109,8 @@ export function createSender<Action, Context>(
         }
       }
     }
-    console.error("Send exhausted retries, skipping:", pending.ts);
-    onExhausted(pending);
+    console.error("Send exhausted retries, skipping:", sanitizedPending.ts);
+    onExhausted(sanitizedPending);
     return { shouldContinue: true };
   }
 

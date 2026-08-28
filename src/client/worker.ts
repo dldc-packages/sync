@@ -1,5 +1,10 @@
-import { restore, sanitize } from "../shared/transport/zenjson.ts";
-import type { TGetStoreReducer } from "../shared/types.ts";
+import type {
+  TGetContext,
+  TGetStoreReducer,
+  TRestoreAction,
+  TRestoreContext,
+  TSanitizeContext,
+} from "../shared/types.ts";
 import { createApiClient } from "./api.ts";
 import { createDispatcher } from "./dispatcher.ts";
 import { init } from "./init.ts";
@@ -7,14 +12,7 @@ import type { OpfsClient, StoredError, TDebugState } from "./opfs.ts";
 import { createSender } from "./sender.ts";
 import { createStore } from "./store.ts";
 import { createSyncer } from "./syncer.ts";
-import { decodeMessage, encodeMessage } from "./transport.ts";
-import type {
-  TGetContext,
-  TRestoreContext,
-  TSanitizeContext,
-  TWorkerInMessage,
-  TWorkerOutMessage,
-} from "./types.ts";
+import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export type TWorkerMessageHandler = (message: MessageEvent) => void;
 
@@ -24,56 +22,42 @@ export interface TWorkerEngine {
 }
 
 export interface TWorkerEngineParams<Action, Context> {
-  getReducer: TGetStoreReducer<Action, Context>;
-
-  /**
-   * Function to get the current context, the context must be transferable (i.e. structured cloneable) and should not contain any functions or non-serializable data.
-   */
-  getContext: TGetContext<Context>;
-  /**
-   * Convert the context to JSON serializable form for storage in OPFS.
-   * By default it will use the internal `zenjson` serializer, which can handle Date, undefined, some Temporal types.
-   */
-  sanitizeContext?: TSanitizeContext<Context>;
-  /**
-   * Convert the context from JSON serializable form to the original context type.
-   */
-  restoreContext?: TRestoreContext<Context>;
-  syncPath: (clientId: string) => string;
-  dispatchPath: (clientId: string) => string;
   crossTabDispatchChannelName: string;
+  dbFileName: string;
+  dispatchPath: (clientId: string) => string;
+  getContext: TGetContext<Context>;
+  getContextTimeoutMs: number;
+  getReducer: TGetStoreReducer<Action, Context>;
+  maxStoredErrors: number;
+  opfsLockName: string;
   reconnectBaseDelay?: number;
   reconnectMaxDelay?: number;
-  dbFileName: string;
-  stateFileName: string;
-  maxStoredErrors: number;
+  restoreAction: TRestoreAction<Action>;
+  sanitizeContext: TSanitizeContext<Context>;
+  restoreContext: TRestoreContext<Context>;
   sendLockName: string;
-  opfsLockName: string;
-  getContextTimeoutMs: number;
+  stateFileName: string;
+  syncPath: (clientId: string) => string;
 }
-
-const DEFAULT_SANITIZE_CONTEXT: TSanitizeContext<any> = (context) =>
-  sanitize(context);
-const DEFAULT_RESTORE_CONTEXT: TRestoreContext<any> = (data) =>
-  Promise.resolve(restore(data));
 
 export function createWorkerEngine<Action, Context>(
   {
-    getReducer,
-    getContext,
-    restoreContext = DEFAULT_RESTORE_CONTEXT,
-    sanitizeContext = DEFAULT_SANITIZE_CONTEXT,
-    syncPath,
-    dispatchPath,
-    reconnectBaseDelay,
-    reconnectMaxDelay,
     crossTabDispatchChannelName,
     dbFileName,
-    stateFileName,
-    maxStoredErrors,
-    sendLockName,
-    opfsLockName,
+    dispatchPath,
+    getContext,
     getContextTimeoutMs,
+    getReducer,
+    maxStoredErrors,
+    opfsLockName,
+    reconnectBaseDelay,
+    reconnectMaxDelay,
+    restoreAction,
+    restoreContext,
+    sanitizeContext,
+    sendLockName,
+    stateFileName,
+    syncPath,
   }: TWorkerEngineParams<Action, Context>,
 ): TWorkerEngine {
   const syncController = new AbortController();
@@ -81,7 +65,7 @@ export function createWorkerEngine<Action, Context>(
   let debugState: TDebugState = { pendingCount: 0, errors: [] };
   let sessionExpired = false;
 
-  let handleMessage = (message: TWorkerInMessage<Action>) => {
+  let handleMessage = (message: TWorkerInMessage) => {
     if (message.kind === "Terminate") {
       syncController.abort();
       self.close();
@@ -91,7 +75,7 @@ export function createWorkerEngine<Action, Context>(
 
   return {
     handleMessage(event: MessageEvent) {
-      handleMessage(decodeMessage(event.data) as TWorkerInMessage<Action>);
+      handleMessage((event.data) as TWorkerInMessage);
     },
     start,
   };
@@ -103,9 +87,18 @@ export function createWorkerEngine<Action, Context>(
     });
   }
 
-  function sendMessage(message: TWorkerOutMessage<Context>): void {
-    const [data, transfer] = encodeMessage(message);
-    self.postMessage(data, transfer);
+  function sendMessage(message: TWorkerOutMessage): void {
+    self.postMessage(message, getTransferable(message));
+  }
+
+  function getTransferable(message: TWorkerOutMessage): Transferable[] {
+    if (message.kind === "Ready") {
+      return [message.database];
+    }
+    if (message.kind === "Database") {
+      return [message.content];
+    }
+    return [];
   }
 
   function handleSessionExpired(): void {
@@ -125,7 +118,7 @@ export function createWorkerEngine<Action, Context>(
   }
 
   async function handleError(
-    opfsClient: OpfsClient<Action, Context> | null,
+    opfsClient: OpfsClient | null,
     kind: StoredError["kind"],
     error: unknown,
     dedupKey?: string,
@@ -159,7 +152,6 @@ export function createWorkerEngine<Action, Context>(
       },
       onUnauthorized: handleSessionExpired,
       getContext,
-      restoreContext,
       sanitizeContext,
       dbFileName,
       stateFileName,
@@ -174,7 +166,7 @@ export function createWorkerEngine<Action, Context>(
     const {
       reducer,
       database,
-      context,
+      context: sanitizedContext,
       opfsClient,
       clientId,
       pending,
@@ -182,10 +174,12 @@ export function createWorkerEngine<Action, Context>(
       serverVersion,
     } = initState;
 
+    const context = restoreContext(sanitizedContext._context);
+
     // Initialize debug state from the loaded OPFS state
     debugState = { pendingCount: pending.length, errors };
 
-    const apiClient = createApiClient<Action>({
+    const apiClient = createApiClient({
       syncPath,
       dispatchPath,
       reconnectBaseDelay,
@@ -199,6 +193,7 @@ export function createWorkerEngine<Action, Context>(
       initialPending: pending,
       initialServerVersion: serverVersion,
       opfsClient,
+      restoreAction,
       onDatabase: (content: Uint8Array) => {
         sendMessage({ kind: "Database", content: content.slice().buffer });
       },
@@ -255,7 +250,7 @@ export function createWorkerEngine<Action, Context>(
       dispatcher.refresh();
     };
 
-    handleMessage = (message: TWorkerInMessage<Action>) => {
+    handleMessage = (message: TWorkerInMessage) => {
       if (message.kind === "Terminate") {
         broadcastChannel.close();
         syncController.abort();
@@ -291,7 +286,7 @@ export function createWorkerEngine<Action, Context>(
 
     sendMessage({
       kind: "Ready",
-      context,
+      context: sanitizedContext,
       database: store.getLocalContent().slice().buffer,
     });
 

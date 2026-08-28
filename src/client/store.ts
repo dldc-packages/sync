@@ -1,5 +1,11 @@
-import type { TStoreReducer } from "../shared/types.ts";
-import type { DispatchResult, OpfsClient, PendingAction } from "./opfs.ts";
+import type { TRestoreAction, TStoreReducer } from "../shared/types.ts";
+import type {
+  DispatchResult,
+  OpfsClient,
+  SanitizedPendingAction,
+} from "./opfs.ts";
+import { createPendingStore } from "./pendings.ts";
+import type { PendingAction } from "./types.ts";
 
 export interface Store<Action> {
   applyPatch(
@@ -7,7 +13,7 @@ export interface Store<Action> {
     patch: Uint8Array | null,
     clientLastApplied: string | null,
   ): Promise<void>;
-  applyDispatchResult(result: DispatchResult<Action>): void;
+  applyDispatchResult(result: DispatchResult): void;
   refreshFromOpfs(): Promise<void>;
   getServerContent(): Uint8Array;
   getLocalContent(): Uint8Array;
@@ -17,9 +23,10 @@ export interface Store<Action> {
 export interface StoreParams<Action, Context> {
   context: Context;
   initialServerVersion: string | null;
-  initialPending: PendingAction<Action>[];
+  initialPending: SanitizedPendingAction[];
   initialDatabase: Uint8Array;
-  opfsClient: OpfsClient<Action, Context>;
+  opfsClient: OpfsClient;
+  restoreAction: TRestoreAction<Action>;
   reducer: TStoreReducer<Action, Context>;
   onDatabase: (content: Uint8Array) => void;
   onStateChange: (pendingCount: number) => void;
@@ -32,6 +39,7 @@ export function createStore<Action, Context>(
     initialPending,
     initialDatabase,
     opfsClient,
+    restoreAction,
     reducer,
     onDatabase,
     onStateChange,
@@ -39,8 +47,8 @@ export function createStore<Action, Context>(
 ): Store<Action> {
   let serverContent: Uint8Array = initialDatabase;
   let serverVersion: string | null = initialServerVersion;
-  let pending: PendingAction<Action>[] = initialPending;
-  let localContent = rebase(serverContent, pending);
+  const pendingsStore = createPendingStore(initialPending, restoreAction);
+  let localContent = rebase(serverContent, pendingsStore.getPendings());
 
   return {
     applyPatch,
@@ -65,15 +73,16 @@ export function createStore<Action, Context>(
       serverContent = result.serverContent;
       serverVersion = result.serverVersion;
     }
-    pending = result.pending;
+    pendingsStore.setPendings(result.pending);
+    const allPending = pendingsStore.getPendings();
 
     // Rebase: reapply remaining pending on top of serverContent
-    localContent = rebase(serverContent, pending);
+    localContent = rebase(serverContent, allPending);
     onDatabase(localContent);
-    onStateChange(pending.length);
+    onStateChange(allPending.length);
   }
 
-  function applyDispatchResult(result: DispatchResult<Action>) {
+  function applyDispatchResult(result: DispatchResult) {
     applyStateChange(
       result.serverContent,
       result.serverVersion,
@@ -102,31 +111,29 @@ export function createStore<Action, Context>(
   function applyStateChange(
     newServerContent: Uint8Array | null,
     newServerVersion: string,
-    newPending: PendingAction<Action>[],
+    newPending: SanitizedPendingAction[],
   ) {
     if (newServerContent !== null) {
       serverContent = newServerContent;
       serverVersion = newServerVersion;
     }
 
-    // Incremental path: server unchanged, pending only grew
-    if (newServerContent === null) {
-      const appended = appendedPending(pending, newPending);
-      if (appended !== null) {
-        if (appended.length === 0) return; // nothing changed
-        pending = newPending;
-        localContent = rebase(localContent, appended);
-        onDatabase(localContent);
-        onStateChange(pending.length);
-        return;
+    const { appended } = pendingsStore.setPendings(newPending);
+    // Incremental path: server unchanged & appended actions only, rebase just the appended actions on top of localContent
+    if (newServerContent === null && appended !== null) {
+      if (appended.length === 0) {
+        return; // nothing changed
       }
+      localContent = rebase(localContent, appended);
+      onDatabase(localContent);
+      onStateChange(pendingsStore.getPendings().length);
+      return;
     }
 
     // Fallback: full rebase of all pending on top of serverContent.
-    pending = newPending;
-    localContent = rebase(serverContent, pending);
+    localContent = rebase(serverContent, pendingsStore.getPendings());
     onDatabase(localContent);
-    onStateChange(pending.length);
+    onStateChange(pendingsStore.getPendings().length);
   }
 
   /**
@@ -145,20 +152,5 @@ export function createStore<Action, Context>(
       result = reducer(result, context, action);
     }
     return result;
-  }
-
-  /**
-   * If `next` is exactly `prev` with extra actions appended (prev is a prefix,
-   * matched by ts), return the appended tail. Otherwise return null.
-   */
-  function appendedPending(
-    prev: PendingAction<Action>[],
-    next: PendingAction<Action>[],
-  ): PendingAction<Action>[] | null {
-    if (next.length < prev.length) return null;
-    for (let i = 0; i < prev.length; i++) {
-      if (prev[i].ts !== next[i].ts) return null;
-    }
-    return next.slice(prev.length);
   }
 }

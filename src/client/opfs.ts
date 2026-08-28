@@ -5,13 +5,19 @@ import {
   parseHLC,
   serializeHLC,
 } from "../shared/hlc.ts";
-import { sanitize } from "../shared/transport/zenjson.ts";
 import { withLock } from "./lock.ts";
-import type { TRestoreContext, TSanitizeContext } from "./types.ts";
 
-export interface PendingAction<Action> {
+export interface SanitizedAction {
+  _action: unknown;
+}
+
+export interface SanitizedContext {
+  _context: unknown; // sanitized context (not the original Context type)
+}
+
+export interface SanitizedPendingAction {
   ts: string; // HLC timestamp string
-  action: Action;
+  action: SanitizedAction; // sanitized action (not the original Action type)
   sent: boolean; // true once the HTTP dispatch returned 200 (persisted, shared across tabs)
 }
 
@@ -30,53 +36,44 @@ export interface TDebugState {
   errors: StoredError[];
 }
 
-export interface SyncState<Action> {
+export interface SyncState {
   clientId: string; // UUID, separate from HLC
   hlc: string | null; // serialized last HLC timestamp
-  pending: PendingAction<Action>[];
+  pending: SanitizedPendingAction[];
   errors: StoredError[]; // local worker errors (not synced)
   serverVersion: string | null; // version ID of the DB in OPFS
-  sanitizedContext: unknown | null; // last known sanitized context (for offline startup fallback)
+  context: SanitizedContext | null; // last known sanitized context (for offline startup fallback)
 }
 
-export interface InitialLoad<Action, Context> {
-  context: Context | null;
-  pending: PendingAction<Action>[];
+export interface InitialLoad {
+  context: SanitizedContext | null;
+  pending: SanitizedPendingAction[];
   serverVersion: string | null;
   errors: StoredError[];
   clientId: string;
   database: Uint8Array;
 }
 
-export interface DispatchResult<Action> {
+export interface DispatchResult {
   ts: string; // the generated HLC timestamp
-  pending: PendingAction<Action>[]; // full pending list (including the new action)
+  pending: SanitizedPendingAction[]; // full pending list (including the new action)
   serverContent: Uint8Array | null; // new DB if another tab changed it, null if unchanged
   serverVersion: string; // current server version from state
 }
 
-export interface PatchResult<Action> {
+export interface PatchResult {
   serverContent: Uint8Array | null; // new DB if version changed (patch applied or cross-tab), null if same version
-  pending: PendingAction<Action>[]; // updated pending list (after dropping acked)
+  pending: SanitizedPendingAction[]; // updated pending list (after dropping acked)
   serverVersion: string; // the version after this operation
 }
 
-export interface RefreshResult<Action> {
-  pending: PendingAction<Action>[]; // current pending list from OPFS
+export interface RefreshResult {
+  pending: SanitizedPendingAction[]; // current pending list from OPFS
   serverContent: Uint8Array | null; // new DB if version changed (another tab applied a patch), null if unchanged
   serverVersion: string; // current server version from state
 }
 
-export interface OpfsClientParams<Context> {
-  sanitizeContext: TSanitizeContext<Context>;
-  restoreContext: TRestoreContext<Context>;
-  dbFileName: string;
-  stateFileName: string;
-  maxStoredErrors: number;
-  opfsLockName: string;
-}
-
-export interface OpfsClient<Action, Context> {
+export interface OpfsClient {
   /**
    * Called when another tab signals a dispatch via BroadcastChannel.
    * Inside the lock: read the state, compare worker's serverVersion with
@@ -85,11 +82,11 @@ export interface OpfsClient<Action, Context> {
    */
   refreshState(
     workerServerVersion: string | null,
-  ): Promise<RefreshResult<Action>>;
+  ): Promise<RefreshResult>;
   /** Called once on worker startup. Reads both the state file and DB under the lock. */
-  loadInitial(): Promise<InitialLoad<Action, Context>>;
+  loadInitial(): Promise<InitialLoad>;
   /** Persist the context so it can be used on the next offline startup. */
-  saveContext(context: Context): Promise<void>;
+  saveContext(context: SanitizedContext): Promise<void>;
   /**
    * Called on dispatch. Inside the lock:
    * - Read the state
@@ -101,9 +98,9 @@ export interface OpfsClient<Action, Context> {
    * - Return pendings + new DB (if version differed)
    */
   dispatchInLock(
-    action: Action,
+    action: SanitizedAction,
     workerServerVersion: string | null,
-  ): Promise<DispatchResult<Action>>;
+  ): Promise<DispatchResult>;
 
   /**
    * Called on sync messages (InitialPatch, Patch, UpToDate). Inside the lock:
@@ -124,11 +121,9 @@ export interface OpfsClient<Action, Context> {
     version: string,
     patch: Uint8Array | null,
     clientLastApplied: string | null,
-  ): Promise<PatchResult<Action>>;
+  ): Promise<PatchResult>;
   /** Read the first unsent pending action from OPFS (under the lock). */
-  getNextUnsentPending(): Promise<
-    PendingAction<Action> | null
-  >;
+  getNextUnsentPending(): Promise<SanitizedPendingAction | null>;
 
   /** Mark a pending action as sent by its timestamp (under the lock). */
   markPendingAsSent(ts: string): Promise<void>;
@@ -165,19 +160,17 @@ export interface OpfsClient<Action, Context> {
   forceRefresh(): Promise<TDebugState>;
 }
 
-export function createOpfsClient<Action, Context>(
-  {
-    restoreContext,
-    sanitizeContext,
-    dbFileName,
-    maxStoredErrors,
-    stateFileName,
-    opfsLockName,
-  }: OpfsClientParams<Context>,
-): OpfsClient<
-  Action,
-  Context
-> {
+export interface OpfsClientParams {
+  dbFileName: string;
+  stateFileName: string;
+  maxStoredErrors: number;
+  opfsLockName: string;
+}
+
+export function createOpfsClient(
+  { dbFileName, maxStoredErrors, stateFileName, opfsLockName }:
+    OpfsClientParams,
+): OpfsClient {
   return {
     refreshState,
     loadInitial,
@@ -196,7 +189,7 @@ export function createOpfsClient<Action, Context>(
 
   function refreshState(
     workerServerVersion: string | null,
-  ): Promise<RefreshResult<Action>> {
+  ): Promise<RefreshResult> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
       let serverContent: Uint8Array | null = null;
@@ -211,37 +204,40 @@ export function createOpfsClient<Action, Context>(
     });
   }
 
-  function loadInitial(): Promise<InitialLoad<Action, Context>> {
-    return withLock(opfsLockName, async () => {
+  function loadInitial(): Promise<InitialLoad> {
+    return withLock(opfsLockName, async (): Promise<InitialLoad> => {
       const state = await readState();
       const {
         serverVersion,
         clientId,
         pending,
         errors,
-        sanitizedContext,
+        context,
       } = state;
       const database = await readDb();
-      const context = sanitizedContext !== null
-        ? await restoreContext(sanitizedContext)
-        : null;
-
-      return { database, context, pending, clientId, errors, serverVersion };
+      return {
+        database,
+        context,
+        pending,
+        clientId,
+        errors,
+        serverVersion,
+      };
     });
   }
 
-  function saveContext(context: Context): Promise<void> {
+  function saveContext(context: SanitizedContext): Promise<void> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
-      state.sanitizedContext = await sanitizeContext(context);
+      state.context = context;
       await writeState(state);
     });
   }
 
   function dispatchInLock(
-    action: Action,
+    action: SanitizedAction,
     workerServerVersion: string | null,
-  ): Promise<DispatchResult<Action>> {
+  ): Promise<DispatchResult> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
 
@@ -250,7 +246,6 @@ export function createOpfsClient<Action, Context>(
       const ts = hlc.send();
       const tsStr = serializeHLC(ts);
       state.hlc = tsStr;
-
       // Add to pending
       state.pending.push({ ts: tsStr, action, sent: false });
 
@@ -276,7 +271,7 @@ export function createOpfsClient<Action, Context>(
     version: string,
     patch: Uint8Array | null,
     clientLastApplied: string | null,
-  ): Promise<PatchResult<Action>> {
+  ): Promise<PatchResult> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
 
@@ -318,9 +313,7 @@ export function createOpfsClient<Action, Context>(
     });
   }
 
-  function getNextUnsentPending(): Promise<
-    PendingAction<Action> | null
-  > {
+  function getNextUnsentPending(): Promise<SanitizedPendingAction | null> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
       return state.pending.find((p) => !p.sent) ?? null;
@@ -379,7 +372,10 @@ export function createOpfsClient<Action, Context>(
         state.errors = state.errors.slice(0, maxStoredErrors);
       }
       await writeState(state);
-      return { pendingCount: state.pending.length, errors: state.errors };
+      return {
+        pendingCount: state.pending.length,
+        errors: state.errors,
+      };
     });
   }
 
@@ -388,7 +384,10 @@ export function createOpfsClient<Action, Context>(
       const state = await readState();
       state.errors = state.errors.filter((e) => e.id !== id);
       await writeState(state);
-      return { pendingCount: state.pending.length, errors: state.errors };
+      return {
+        pendingCount: state.pending.length,
+        errors: state.errors,
+      };
     });
   }
 
@@ -398,7 +397,10 @@ export function createOpfsClient<Action, Context>(
       const state = await readState();
       state.errors = [];
       await writeState(state);
-      return { pendingCount: state.pending.length, errors: state.errors };
+      return {
+        pendingCount: state.pending.length,
+        errors: state.errors,
+      };
     });
   }
 
@@ -419,7 +421,10 @@ export function createOpfsClient<Action, Context>(
       } catch {
         // file may not exist
       }
-      return { pendingCount: state.pending.length, errors: state.errors };
+      return {
+        pendingCount: state.pending.length,
+        errors: state.errors,
+      };
     });
   }
 
@@ -436,26 +441,29 @@ export function createOpfsClient<Action, Context>(
       } catch {
         // file may not exist
       }
-      return { pendingCount: state.pending.length, errors: state.errors };
+      return {
+        pendingCount: state.pending.length,
+        errors: state.errors,
+      };
     });
   }
 
   // --- Internal helpers (run inside the lock) ---
 
-  async function readState(): Promise<SyncState<Action>> {
+  async function readState(): Promise<SyncState> {
     const root = await navigator.storage.getDirectory();
     const handle = await root.getFileHandle(stateFileName, { create: true });
     const accessHandle = await handle.createSyncAccessHandle();
     try {
       const size = accessHandle.getSize();
       if (size === 0) {
-        const newState: SyncState<Action> = {
+        const newState: SyncState = {
           clientId: crypto.randomUUID(),
           hlc: null,
           pending: [],
           errors: [],
           serverVersion: null,
-          sanitizedContext: null,
+          context: null,
         };
         // Persist the new state immediately so clientId is saved
         writeStateAt(accessHandle, newState);
@@ -463,12 +471,10 @@ export function createOpfsClient<Action, Context>(
       }
       const bytes = new Uint8Array(size);
       accessHandle.read(bytes, { at: 0 });
-      const restored = JSON.parse(new TextDecoder().decode(bytes)) as SyncState<
-        Action
-      >;
+      const restored = JSON.parse(new TextDecoder().decode(bytes)) as SyncState;
       return {
         ...restored,
-        sanitizedContext: restored.sanitizedContext ?? null,
+        context: restored.context ?? null,
         errors: restored.errors ?? [],
       };
     } finally {
@@ -476,7 +482,7 @@ export function createOpfsClient<Action, Context>(
     }
   }
 
-  async function writeState(state: SyncState<Action>): Promise<void> {
+  async function writeState(state: SyncState): Promise<void> {
     const root = await navigator.storage.getDirectory();
     const handle = await root.getFileHandle(stateFileName, { create: true });
     const accessHandle = await handle.createSyncAccessHandle();
@@ -489,10 +495,10 @@ export function createOpfsClient<Action, Context>(
 
   function writeStateAt(
     accessHandle: FileSystemSyncAccessHandle,
-    state: SyncState<Action>,
+    state: SyncState,
   ): void {
     accessHandle.truncate(0);
-    const bytes = new TextEncoder().encode(JSON.stringify(sanitize(state)));
+    const bytes = new TextEncoder().encode(JSON.stringify(state));
     accessHandle.write(bytes, { at: 0 });
     accessHandle.flush();
   }

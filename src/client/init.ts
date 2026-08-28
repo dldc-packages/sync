@@ -1,27 +1,28 @@
-import type { TGetStoreReducer, TStoreReducer } from "../shared/types.ts";
+import type {
+  TGetContext,
+  TGetStoreReducer,
+  TSanitizeContext,
+  TStoreReducer,
+} from "../shared/types.ts";
 import { UnauthorizedError } from "./errors.ts";
 import {
   createOpfsClient,
   type OpfsClient,
-  type PendingAction,
+  type SanitizedContext,
+  type SanitizedPendingAction,
   type StoredError,
 } from "./opfs.ts";
-import type {
-  TGetContext,
-  TRestoreContext,
-  TSanitizeContext,
-} from "./types.ts";
 
 /** Values computed once during `start()` and never reassigned. */
 interface EngineInit<Action, Context> {
   reducer: TStoreReducer<Action, Context>;
-  context: Context;
+  context: SanitizedContext;
   clientId: string;
-  pending: PendingAction<Action>[];
+  pending: SanitizedPendingAction[];
   serverVersion: string | null;
   errors: StoredError[];
   database: Uint8Array;
-  opfsClient: OpfsClient<Action, Context>;
+  opfsClient: OpfsClient;
 }
 
 export interface InitParams<Action, Context> {
@@ -29,7 +30,6 @@ export interface InitParams<Action, Context> {
   onNoContextError: () => void;
   onUnauthorized: () => void;
   getContext: TGetContext<Context>;
-  restoreContext: TRestoreContext<Context>;
   sanitizeContext: TSanitizeContext<Context>;
   dbFileName: string;
   stateFileName: string;
@@ -44,7 +44,6 @@ export async function init<Action, Context>(
     onUnauthorized,
     getContext,
     getReducer,
-    restoreContext,
     sanitizeContext,
     dbFileName,
     stateFileName,
@@ -53,13 +52,11 @@ export async function init<Action, Context>(
     getContextTimeoutMs,
   }: InitParams<Action, Context>,
 ): Promise<EngineInit<Action, Context> | null> {
-  const opfsClient = createOpfsClient<Action, Context>({
+  const opfsClient = createOpfsClient({
     dbFileName,
     stateFileName,
     maxStoredErrors,
     opfsLockName,
-    restoreContext,
-    sanitizeContext,
   });
 
   // In parallel
@@ -96,7 +93,7 @@ export async function init<Action, Context>(
 
     const savedContext = initContext;
 
-    let context: Context | null = null;
+    let context: SanitizedContext | null = null;
 
     if (navigator.onLine) {
       try {
@@ -133,7 +130,7 @@ export async function init<Action, Context>(
   }
 
   /** Calls getMe with an abort timeout so we don't block startup on a slow network. */
-  async function getContextWithTimeout(): Promise<Context | null> {
+  async function getContextWithTimeout(): Promise<SanitizedContext | null> {
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
@@ -141,10 +138,10 @@ export async function init<Action, Context>(
     );
     try {
       const ctx = await getContext(controller.signal);
-      if (ctx !== null && restoreContext) {
-        return await restoreContext(ctx);
+      if (ctx !== null) {
+        return { _context: sanitizeContext(ctx) };
       }
-      return ctx;
+      return null;
     } finally {
       clearTimeout(timeoutId);
     }

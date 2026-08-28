@@ -1,7 +1,6 @@
 import * as v from "@valibot/valibot";
-import { fileSyncTransportWriter } from "../shared/transport/fileSync.ts";
-import { restore } from "../shared/transport/zenjson.ts";
-import type { TGetStoreReducer } from "../shared/types.ts";
+import { fileSyncTransportWriter } from "../shared/fileSync.ts";
+import type { TGetStoreReducer, TRestoreAction } from "../shared/types.ts";
 import { createFileStore, type TStoreUpdateContext } from "./fileStore.ts";
 import { createStateDb } from "./stateDb.ts";
 
@@ -26,7 +25,7 @@ export interface TStore<Context> {
 export interface StoreParams<Action, Context> {
   stateDatabasePath: string;
   filePath: string;
-  actionSchema: v.GenericSchema<Action>;
+  restoreAction: TRestoreAction<Action>;
   getReducer: TGetStoreReducer<Action, Context>;
 }
 
@@ -36,7 +35,7 @@ const vDispatchRequest = v.object({
 });
 
 export async function createStore<Action, Context>(
-  { stateDatabasePath, filePath, getReducer, actionSchema }: StoreParams<
+  { stateDatabasePath, filePath, getReducer, restoreAction }: StoreParams<
     Action,
     Context
   >,
@@ -133,9 +132,8 @@ export async function createStore<Action, Context>(
     clientId: string,
     context: Context,
   ): Response {
-    const decoded = restore(bodyJson);
-    const { action: actionAny, ts } = v.parse(vDispatchRequest, decoded);
-    const action = v.parse(actionSchema, actionAny);
+    const { action: actionAny, ts } = v.parse(vDispatchRequest, bodyJson);
+    const action = restoreAction(actionAny);
 
     // Idempotency: skip if already applied
     const isNew = stateDb.updateClientLastApplied(clientId, ts);

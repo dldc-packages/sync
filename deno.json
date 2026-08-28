@@ -1,10 +1,13 @@
 {
   "name": "@dldc/sync",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "exports": {
     "./client": "./src/client.ts",
+    "./client/internal": "./src/client/internal.ts",
     "./server": "./src/server.ts",
-    "./shared": "./src/shared.ts"
+    "./server/internal": "./src/server/internal.ts",
+    "./shared": "./src/shared.ts",
+    "./shared/internal": "./src/shared/internal.ts"
   },
   "imports": {
     "@db/sqlite": "jsr:@db/sqlite@^0.13.0",
@@ -12,7 +15,6 @@
     "@dldc/pubsub": "jsr:@dldc/pubsub@^7.1.0",
     "@dldc/zendb": "jsr:@dldc/zendb@^12.2.0",
     "@dldc/zendb-db-sqlite": "jsr:@dldc/zendb-db-sqlite@^5.1.0",
-    "@dldc/zenjson": "jsr:@dldc/zenjson@^3.0.1",
     "@std/msgpack": "jsr:@std/msgpack@^1.0.3",
     "@std/expect": "jsr:@std/expect@^1.0.13",
     "@valibot/valibot": "jsr:@valibot/valibot@^1.4.2"

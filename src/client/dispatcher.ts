@@ -1,29 +1,26 @@
 import { createQueue } from "../shared/queue.ts";
-import type { OpfsClient } from "./opfs.ts";
+import type { OpfsClient, SanitizedAction } from "./opfs.ts";
 import type { Sender } from "./sender.ts";
 import type { Store } from "./store.ts";
 
-export interface Dispatcher<Action> {
-  dispatch(action: Action): Promise<void>;
+export interface Dispatcher {
+  dispatch(action: SanitizedAction): Promise<void>;
   refresh(): Promise<void>;
 }
 
-export interface DispatcherParams<Action, Context> {
+export interface DispatcherParams<Action> {
   signal: AbortSignal;
   store: Store<Action>;
   sender: Sender;
-  opfsClient: OpfsClient<Action, Context>;
+  opfsClient: OpfsClient;
   onDispatchError: (error: unknown) => void;
   onDispatched: () => void;
 }
 
-export function createDispatcher<Action, Context>(
+export function createDispatcher<Action>(
   { signal, store, sender, opfsClient, onDispatchError, onDispatched }:
-    DispatcherParams<
-      Action,
-      Context
-    >,
-): Dispatcher<Action> {
+    DispatcherParams<Action>,
+): Dispatcher {
   const dispatchQueue = createQueue(signal);
 
   return {
@@ -31,7 +28,7 @@ export function createDispatcher<Action, Context>(
     refresh,
   };
 
-  function dispatch(action: Action): Promise<void> {
+  function dispatch(action: SanitizedAction): Promise<void> {
     return dispatchQueue.run(async () => {
       try {
         // Inside the lock: read state, generate TS, add to pending,

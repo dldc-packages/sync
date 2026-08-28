@@ -3,7 +3,7 @@ import type { ApiClient } from "./api.ts";
 import type { Store } from "./store.ts";
 
 export interface SyncerParams<Action> {
-  apiClient: ApiClient<Action>;
+  apiClient: ApiClient;
   clientId: string;
   signal: AbortSignal;
   store: Store<Action>;
