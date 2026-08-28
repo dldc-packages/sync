@@ -69,7 +69,7 @@ export function createPendingStore<Action>(
   ): PendingAction<Action> {
     return {
       ts: sanitized.ts,
-      action: restoreAction(sanitized.action),
+      action: restoreAction(sanitized.action._action),
     };
   }
 

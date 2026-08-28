@@ -4,11 +4,6 @@ export {
   createApiClient,
 } from "./api.ts";
 export {
-  createWorkerClient,
-  forceServerReload,
-  type WorkerClient,
-} from "./client.ts";
-export {
   createDispatcher,
   type Dispatcher,
   type DispatcherParams,
@@ -37,8 +32,13 @@ export {
   type TWorkerOutMessage,
 } from "./types.ts";
 export {
+  createWorkerClient,
+  forceServerReload,
+  type WorkerClient,
+} from "./workerClient.ts";
+export {
   createWorkerEngine,
   type TWorkerEngine,
   type TWorkerEngineParams,
   type TWorkerMessageHandler,
-} from "./worker.ts";
+} from "./workerEngine.ts";
