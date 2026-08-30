@@ -6,7 +6,7 @@
  * `teardown` closes the browser, kills the server, and cleans the data dir.
  */
 
-import { chromium, type Browser, type Page } from "playwright";
+import { type Browser, chromium, type Page } from "playwright";
 
 const APP_ROOT = new URL("../", import.meta.url).pathname;
 
@@ -32,7 +32,9 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
 
 /** Wait for a page's sync client to be ready (window.__syncReady === true). */
 export function waitForSyncReady(page: Page) {
-  return page.waitForFunction(() => (window as any).__syncReady === true, { timeout: 15_000 });
+  return page.waitForFunction(() => (window as any).__syncReady === true, {
+    timeout: 15_000,
+  });
 }
 
 export interface TestHandle {
@@ -48,7 +50,13 @@ export async function startServer(): Promise<TestHandle> {
   const baseUrl = `http://localhost:${PORT}/`;
 
   const serverProc = new Deno.Command("deno", {
-    args: ["run", "-A", "--unstable-ffi", "--unstable-no-legacy-abort", "./server.ts"],
+    args: [
+      "run",
+      "-A",
+      "--unstable-ffi",
+      "--unstable-no-legacy-abort",
+      "./server.ts",
+    ],
     cwd: APP_ROOT,
     env: {
       ...Deno.env.toObject(),

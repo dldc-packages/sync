@@ -70,8 +70,10 @@ async function waitForConvergence(
   // Collect final state for the error message
   const finalState = await Promise.all(pages.map((p) => getTodoTexts(p)));
   throw new Error(
-    `Convergence timeout: clients did not agree on ${expectedCount} todos within ${timeoutMs}ms\n`
-      + finalState.map((t, i) => `  client ${i} (${t.length}): ${JSON.stringify(t)}`).join("\n"),
+    `Convergence timeout: clients did not agree on ${expectedCount} todos within ${timeoutMs}ms\n` +
+      finalState.map((t, i) =>
+        `  client ${i} (${t.length}): ${JSON.stringify(t)}`
+      ).join("\n"),
   );
 }
 
@@ -92,32 +94,48 @@ Deno.test("E2E: stress test - concurrent add/delete across multiple clients", as
       pages.push(page);
     }
 
-    await t.step(`concurrent add: ${NUM_CLIENTS} clients x ${TODOS_PER_CLIENT} todos`, async () => {
-      const start = Date.now();
-      // Each client adds its batch of todos simultaneously
-      await Promise.all(pages.map(async (page, clientIdx) => {
-        const texts = Array.from({ length: TODOS_PER_CLIENT }, (_, i) => `c${clientIdx}-t${i}`);
-        await addTodos(page, texts);
-      }));
+    await t.step(
+      `concurrent add: ${NUM_CLIENTS} clients x ${TODOS_PER_CLIENT} todos`,
+      async () => {
+        const start = Date.now();
+        // Each client adds its batch of todos simultaneously
+        await Promise.all(pages.map(async (page, clientIdx) => {
+          const texts = Array.from(
+            { length: TODOS_PER_CLIENT },
+            (_, i) => `c${clientIdx}-t${i}`,
+          );
+          await addTodos(page, texts);
+        }));
 
-      const expected = NUM_CLIENTS * TODOS_PER_CLIENT;
-      await waitForConvergence(pages, expected);
-      console.log(`  converged to ${expected} todos in ${Date.now() - start}ms`);
-    });
+        const expected = NUM_CLIENTS * TODOS_PER_CLIENT;
+        await waitForConvergence(pages, expected);
+        console.log(
+          `  converged to ${expected} todos in ${Date.now() - start}ms`,
+        );
+      },
+    );
 
-    await t.step("concurrent delete: each client deletes half its todos", async () => {
-      const start = Date.now();
-      const half = Math.floor(TODOS_PER_CLIENT / 2);
-      // Each client deletes the first half of its own todos simultaneously
-      await Promise.all(pages.map(async (page, clientIdx) => {
-        const toDelete = Array.from({ length: half }, (_, i) => `c${clientIdx}-t${i}`);
-        await deleteTodosByText(page, toDelete);
-      }));
+    await t.step(
+      "concurrent delete: each client deletes half its todos",
+      async () => {
+        const start = Date.now();
+        const half = Math.floor(TODOS_PER_CLIENT / 2);
+        // Each client deletes the first half of its own todos simultaneously
+        await Promise.all(pages.map(async (page, clientIdx) => {
+          const toDelete = Array.from(
+            { length: half },
+            (_, i) => `c${clientIdx}-t${i}`,
+          );
+          await deleteTodosByText(page, toDelete);
+        }));
 
-      const expected = NUM_CLIENTS * (TODOS_PER_CLIENT - half);
-      await waitForConvergence(pages, expected);
-      console.log(`  converged to ${expected} todos in ${Date.now() - start}ms`);
-    });
+        const expected = NUM_CLIENTS * (TODOS_PER_CLIENT - half);
+        await waitForConvergence(pages, expected);
+        console.log(
+          `  converged to ${expected} todos in ${Date.now() - start}ms`,
+        );
+      },
+    );
 
     await t.step("final state is consistent across all clients", async () => {
       const allTexts = await Promise.all(pages.map((p) => getTodoTexts(p)));
@@ -125,11 +143,15 @@ Deno.test("E2E: stress test - concurrent add/delete across multiple clients", as
       const first = JSON.stringify(sorted[0]);
       if (!sorted.every((s) => JSON.stringify(s) === first)) {
         throw new Error(
-          "Clients disagree on final state:\n"
-            + sorted.map((s, i) => `  client ${i}: ${JSON.stringify(s)}`).join("\n"),
+          "Clients disagree on final state:\n" +
+            sorted.map((s, i) => `  client ${i}: ${JSON.stringify(s)}`).join(
+              "\n",
+            ),
         );
       }
-      console.log(`  all ${NUM_CLIENTS} clients agree on ${sorted[0].length} todos`);
+      console.log(
+        `  all ${NUM_CLIENTS} clients agree on ${sorted[0].length} todos`,
+      );
     });
 
     for (const ctx of contexts) {

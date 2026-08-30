@@ -39,11 +39,11 @@ what makes it "real time".
 
 ## API surface
 
-| Module | Purpose |
-| --- | --- |
+| Module              | Purpose                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------- |
 | `@dldc/sync/shared` | Types + helpers shared by client & server (`TStoreReducer`, sanitize/restore, HLC) |
-| `@dldc/sync/server` | `createStore` — the authoritative store with reducer + rsync + dispatch |
-| `@dldc/sync/client` | `createWorkerEngine` (worker) + `createWorkerClient` (main thread) |
+| `@dldc/sync/server` | `createStore` — the authoritative store with reducer + rsync + dispatch            |
+| `@dldc/sync/client` | `createWorkerEngine` (worker) + `createWorkerClient` (main thread)                 |
 
 ## Getting started
 
@@ -64,7 +64,7 @@ import { reducer, restoreAction } from "./shared.ts";
 
 const store = await createStore({
   stateDatabasePath: "./state.sqlite", // lib bookkeeping (last-applied, versions)
-  filePath: "./data.json",             // YOUR app data file — read/written by the reducer
+  filePath: "./data.json", // YOUR app data file — read/written by the reducer
   getReducer: async () => reducer,
   restoreAction,
 });
@@ -81,9 +81,15 @@ versions across restarts.
 ### Reducer + types (shared)
 
 ```ts
-import type { TStoreReducer, TRestoreAction, TSanitizeAction } from "@dldc/sync/shared";
+import type {
+  TRestoreAction,
+  TSanitizeAction,
+  TStoreReducer,
+} from "@dldc/sync/shared";
 
-interface TodoState { todos: { id: string; text: string; done: boolean }[] }
+interface TodoState {
+  todos: { id: string; text: string; done: boolean }[];
+}
 type Action =
   | { kind: "AddTodo"; id: string; text: string }
   | { kind: "ToggleTodo"; id: string };
@@ -100,8 +106,9 @@ const restoreAction: TRestoreAction<Action> = (data) => data as Action;
 const sanitizeAction: TSanitizeAction<Action> = (action) => action;
 ```
 
-Actions travel between client and server as JSON; `sanitizeAction`/`restoreAction`
-convert them (identity for plain data, or encode/decode custom types).
+Actions travel between client and server as JSON;
+`sanitizeAction`/`restoreAction` convert them (identity for plain data, or
+encode/decode custom types).
 
 ### Client (browser)
 
@@ -117,7 +124,9 @@ const engine = createWorkerEngine<Action, Context>({
   getContext: async () => ({}),
   syncPath: (id) => `/api/client/${id}/sync`,
   dispatchPath: (id) => `/api/client/${id}/dispatch`,
-  restoreAction, sanitizeContext, restoreContext,
+  restoreAction,
+  sanitizeContext,
+  restoreContext,
   dbFileName: "data.json",
   stateFileName: "state.json",
   opfsLockName: "app-opfs",
@@ -134,8 +143,11 @@ engine.start();
 // main.ts
 import { createWorkerClient } from "@dldc/sync/client";
 const client = createWorkerClient<Action, Context>({
-  worker: new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }),
-  sanitizeAction, restoreContext,
+  worker: new Worker(new URL("./worker.ts", import.meta.url), {
+    type: "module",
+  }),
+  sanitizeAction,
+  restoreContext,
 });
 
 client.subscribeDatabase((bytes) => render(decode(bytes))); // re-render on changes
@@ -145,10 +157,12 @@ client.dispatch({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }); // op
 ## Features
 
 - **Real-time sync** via rsync delta patches over a live stream
-- **Optimistic UI** — clients apply the reducer locally before the server round-trip
+- **Optimistic UI** — clients apply the reducer locally before the server
+  round-trip
 - **Offline-first** — pending actions persist in OPFS and flush when back online
 - **Multi-tab** — a broadcast channel keeps tabs in sync
-- **Idempotent dispatch** — actions are deduped by hybrid logical clock (HLC) timestamp
+- **Idempotent dispatch** — actions are deduped by hybrid logical clock (HLC)
+  timestamp
 
 ## License
 

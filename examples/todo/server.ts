@@ -29,7 +29,11 @@ const store = await createStore({
   restoreAction,
 });
 
-console.log(`Todo server listening on http://localhost:${PORT}${hasStatic ? " (serving static)" : ""}`);
+console.log(
+  `Todo server listening on http://localhost:${PORT}${
+    hasStatic ? " (serving static)" : ""
+  }`,
+);
 
 Deno.serve({ port: PORT }, handler);
 
