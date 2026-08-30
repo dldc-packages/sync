@@ -4,7 +4,12 @@
       "dependencies": ["client:dev", "server:dev"]
     },
     "client:dev": "vite",
-    "server:dev": "deno run -A --unstable-ffi --unstable-no-legacy-abort --watch ./server.ts"
+    "client:build": "vite build",
+    "server:dev": "deno run -A --unstable-ffi --unstable-no-legacy-abort --watch ./server.ts",
+    "test:e2e": {
+      "dependencies": ["client:build"],
+      "command": "deno test -A --node-modules-dir e2e/"
+    }
   },
   "nodeModulesDir": "auto",
   "unstable": ["ffi"],
@@ -17,6 +22,7 @@
     "@dldc/zendb-db-sqlite": "jsr:@dldc/zendb-db-sqlite@^5.1.0",
     "@std/msgpack": "jsr:@std/msgpack@^1.0.3",
     "@valibot/valibot": "jsr:@valibot/valibot@^1.4.2",
+    "playwright": "npm:playwright@^1.40.0",
     "vite": "npm:vite@^8.1.5"
   },
   "compilerOptions": {

@@ -1,6 +1,5 @@
 import { createWorkerClient } from "../../../src/client.ts";
 import type { Action, Context, TodoState } from "../shared.ts";
-import "./style.css";
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
@@ -12,8 +11,11 @@ const client = createWorkerClient<Action, Context>({
   restoreContext: (data) => data as Context,
 });
 
-/** Decode the current JSON file bytes into a TodoState. */
+/** Decode the current JSON file bytes into a TodoState. An empty file (fresh) means an empty list. */
 function decodeDatabase(bytes: Uint8Array): TodoState {
+  if (bytes.byteLength === 0) {
+    return { todos: [] };
+  }
   const text = new TextDecoder().decode(bytes);
   return JSON.parse(text) as TodoState;
 }
@@ -74,5 +76,6 @@ function render(state: TodoState): void {
 }
 
 client.ready().then(() => {
+  (window as any).__syncReady = true;
   render(decodeDatabase(client.getDatabase()));
 });

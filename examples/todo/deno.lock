@@ -414,6 +414,7 @@
       "jsr:@std/msgpack@^1.0.3",
       "jsr:@valibot/valibot@^1.4.2",
       "npm:@deno/vite-plugin@^2.0.3",
+      "npm:playwright@^1.40.0",
       "npm:vite@^8.1.5"
     ]
   }
