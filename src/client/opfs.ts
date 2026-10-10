@@ -1,10 +1,6 @@
+import "temporal-polyfill/global";
 import { apply } from "@dldc/librsync";
-import {
-  compareHLC,
-  createHLC,
-  parseHLC,
-  serializeHLC,
-} from "../shared/hlc.ts";
+import { compareHLC, createHLC, parseHLC, serializeHLC } from "../shared/hlc.ts";
 import { withLock } from "./lock.ts";
 
 export interface SanitizedAction {
@@ -80,9 +76,7 @@ export interface OpfsClient {
    * state's serverVersion (another tab may have applied a patch), and return
    * the current pending list + new DB (if version differed).
    */
-  refreshState(
-    workerServerVersion: string | null,
-  ): Promise<RefreshResult>;
+  refreshState(workerServerVersion: string | null): Promise<RefreshResult>;
   /** Called once on worker startup. Reads both the state file and DB under the lock. */
   loadInitial(): Promise<InitialLoad>;
   /** Persist the context so it can be used on the next offline startup. */
@@ -167,10 +161,12 @@ export interface OpfsClientParams {
   opfsLockName: string;
 }
 
-export function createOpfsClient(
-  { dbFileName, maxStoredErrors, stateFileName, opfsLockName }:
-    OpfsClientParams,
-): OpfsClient {
+export function createOpfsClient({
+  dbFileName,
+  maxStoredErrors,
+  stateFileName,
+  opfsLockName,
+}: OpfsClientParams): OpfsClient {
   return {
     refreshState,
     loadInitial,
@@ -187,9 +183,7 @@ export function createOpfsClient(
     forceRefresh,
   };
 
-  function refreshState(
-    workerServerVersion: string | null,
-  ): Promise<RefreshResult> {
+  function refreshState(workerServerVersion: string | null): Promise<RefreshResult> {
     return withLock(opfsLockName, async () => {
       const state = await readState();
       let serverContent: Uint8Array | null = null;
@@ -207,13 +201,7 @@ export function createOpfsClient(
   function loadInitial(): Promise<InitialLoad> {
     return withLock(opfsLockName, async (): Promise<InitialLoad> => {
       const state = await readState();
-      const {
-        serverVersion,
-        clientId,
-        pending,
-        errors,
-        context,
-      } = state;
+      const { serverVersion, clientId, pending, errors, context } = state;
       const database = await readDb();
       return {
         database,
@@ -493,10 +481,7 @@ export function createOpfsClient(
     }
   }
 
-  function writeStateAt(
-    accessHandle: FileSystemSyncAccessHandle,
-    state: SyncState,
-  ): void {
+  function writeStateAt(accessHandle: FileSystemSyncAccessHandle, state: SyncState): void {
     accessHandle.truncate(0);
     const bytes = new TextEncoder().encode(JSON.stringify(state));
     accessHandle.write(bytes, { at: 0 });

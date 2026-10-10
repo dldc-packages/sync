@@ -40,14 +40,10 @@ export type TFileSyncMessage = UnionFromMap<TFileSyncMessageData>;
 export type TFileSyncTransportWriter = TStreamTransportWriter<TFileSyncMessage>;
 export type TFileSyncTransportReader = TStreamTransportReader<TFileSyncMessage>;
 
-export function fileSyncTransportReader(
-  reader: TStreamReader,
-): TFileSyncTransportReader {
+export function fileSyncTransportReader(reader: TStreamReader): TFileSyncTransportReader {
   return streamTransportReader<TFileSyncMessage>(reader);
 }
 
-export function fileSyncTransportWriter(
-  writer: TStreamWriter,
-): TFileSyncTransportWriter {
+export function fileSyncTransportWriter(writer: TStreamWriter): TFileSyncTransportWriter {
   return streamTransportWriter<TFileSyncMessage>(writer);
 }

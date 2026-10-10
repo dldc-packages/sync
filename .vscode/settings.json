@@ -1,8 +1,10 @@
 {
-  "deno.enable": true,
-  "editor.defaultFormatter": "denoland.vscode-deno",
-  "npm.autoDetect": "off",
+  "deno.enable": false,
+  "npm.autoDetect": "on",
   "[typescript]": {
-    "editor.defaultFormatter": "denoland.vscode-deno"
+    "editor.defaultFormatter": null
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": null
   }
 }

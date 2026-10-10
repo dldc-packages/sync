@@ -6,9 +6,14 @@
  * `teardown` closes the browser, kills the server, and cleans the data dir.
  */
 
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Browser, chromium, type Page } from "playwright";
 
-const APP_ROOT = new URL("../", import.meta.url).pathname;
+const APP_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 /** Pick a random port in the ephemeral range. */
 function randomPort(): number {
@@ -21,7 +26,7 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url);
-      res.body?.cancel();
+      void res.body?.cancel();
       return;
     } catch {
       await new Promise((r) => setTimeout(r, 200));
@@ -46,38 +51,25 @@ export interface TestHandle {
 /** Start an isolated server + browser. Returns a handle to use in tests + teardown. */
 export async function startServer(): Promise<TestHandle> {
   const PORT = randomPort();
-  const DATA_DIR = await Deno.makeTempDir({ prefix: `e2e-todo-${PORT}-` });
+  const DATA_DIR = await mkdtemp(join(tmpdir(), `e2e-todo-${PORT}-`));
   const baseUrl = `http://localhost:${PORT}/`;
 
-  const serverProc = new Deno.Command("deno", {
-    args: [
-      "run",
-      "-A",
-      "--unstable-ffi",
-      "--unstable-no-legacy-abort",
-      "./server.ts",
-    ],
+  const serverProc = spawn("node", ["--import", "tsx", "server.ts"], {
     cwd: APP_ROOT,
     env: {
-      ...Deno.env.toObject(),
+      ...process.env,
       PORT: String(PORT),
       DATA_DIR,
     },
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    stdio: ["ignore", "ignore", "pipe"],
+  });
 
   // Stream stderr to the console for debugging
-  (async () => {
-    const reader = serverProc.stderr.getReader();
-    const dec = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = dec.decode(value).trimEnd();
-      if (text) console.log(`  [server:${PORT}] ${text}`);
-    }
-  })();
+  const decoder = new TextDecoder();
+  serverProc.stderr.on("data", (chunk) => {
+    const text = decoder.decode(chunk).trimEnd();
+    if (text) console.log(`  [server:${PORT}] ${text}`);
+  });
 
   await waitForServer(baseUrl);
   console.log(`Server is up on port ${PORT}`);
@@ -90,12 +82,15 @@ export async function startServer(): Promise<TestHandle> {
     async teardown() {
       await browser.close();
       serverProc.kill("SIGTERM");
-      await serverProc.status;
-      try {
-        await Deno.remove(DATA_DIR, { recursive: true });
-      } catch {
-        // already gone
-      }
+      await waitForExit(serverProc);
+      await rm(DATA_DIR, { recursive: true, force: true });
     },
   };
+}
+
+function waitForExit(proc: ChildProcess): Promise<void> {
+  if (proc.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    proc.once("exit", () => resolve());
+  });
 }

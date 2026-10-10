@@ -1,9 +1,6 @@
 export { createDeferred } from "./deferred.ts";
 export type { TDeferred } from "./deferred.ts";
-export {
-  fileSyncTransportReader,
-  fileSyncTransportWriter,
-} from "./fileSync.ts";
+export { fileSyncTransportReader, fileSyncTransportWriter } from "./fileSync.ts";
 export type {
   TFileSyncMessage,
   TFileSyncMessageData,

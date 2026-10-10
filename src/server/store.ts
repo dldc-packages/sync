@@ -1,25 +1,14 @@
-import * as v from "@valibot/valibot";
+import * as v from "valibot";
 import { fileSyncTransportWriter } from "../shared/fileSync.ts";
 import type { TGetStoreReducer, TRestoreAction } from "../shared/types.ts";
 import { createFileStore, type TStoreUpdateContext } from "./fileStore.ts";
 import { createStateDb } from "./stateDb.ts";
 
 export interface TStore<Context> {
-  sync(
-    clientSignature: Uint8Array,
-    clientId: string,
-    signal: AbortSignal,
-  ): Response;
-  dispatch(
-    bodyJson: unknown,
-    clientId: string,
-    context: Context,
-  ): Response;
+  sync(clientSignature: Uint8Array, clientId: string, signal: AbortSignal): Response;
+  dispatch(bodyJson: unknown, clientId: string, context: Context): Response;
   getCurrent: () => Uint8Array;
-  update(
-    updater: (current: Uint8Array) => Uint8Array,
-    context: TStoreUpdateContext,
-  ): void;
+  update(updater: (current: Uint8Array) => Uint8Array, context: TStoreUpdateContext): void;
 }
 
 export interface StoreParams<Action, Context> {
@@ -34,12 +23,12 @@ const vDispatchRequest = v.object({
   ts: v.string(),
 });
 
-export async function createStore<Action, Context>(
-  { stateDatabasePath, filePath, getReducer, restoreAction }: StoreParams<
-    Action,
-    Context
-  >,
-): Promise<TStore<Context>> {
+export async function createStore<Action, Context>({
+  stateDatabasePath,
+  filePath,
+  getReducer,
+  restoreAction,
+}: StoreParams<Action, Context>): Promise<TStore<Context>> {
   const stateDb = await createStateDb({ stateDatabasePath });
   const fileStore = createFileStore({
     filePath,
@@ -55,11 +44,7 @@ export async function createStore<Action, Context>(
     update: fileStore.update,
   };
 
-  function sync(
-    clientSignature: Uint8Array,
-    clientId: string,
-    signal: AbortSignal,
-  ): Response {
+  function sync(clientSignature: Uint8Array, clientId: string, signal: AbortSignal): Response {
     // compare() returns { patch, version } atomically — version is captured at
     // comparison time, avoiding a race where getVersion() could change between
     // the compare and the UpToDate message
@@ -120,18 +105,14 @@ export async function createStore<Action, Context>(
 
     return new Response(body, {
       headers: {
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
         "Content-Type": "application/octet-stream",
         "Cache-Control": "no-transform",
       },
     });
   }
 
-  function dispatch(
-    bodyJson: unknown,
-    clientId: string,
-    context: Context,
-  ): Response {
+  function dispatch(bodyJson: unknown, clientId: string, context: Context): Response {
     const { action: actionAny, ts } = v.parse(vDispatchRequest, bodyJson);
     const action = restoreAction(actionAny);
 
@@ -141,10 +122,10 @@ export async function createStore<Action, Context>(
       return jsonResponse({ status: "ok", applied: false }); // already applied, dedup
     }
 
-    fileStore.update(
-      (current) => reducer(current, context, action),
-      { clientId, clientLastApplied: ts },
-    );
+    fileStore.update((current) => reducer(current, context, action), {
+      clientId,
+      clientLastApplied: ts,
+    });
     return jsonResponse({ status: "ok", applied: true });
 
     // return dispatchHandler(fileStore, clientId, reducer, context, action, ts);

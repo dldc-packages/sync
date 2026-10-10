@@ -1,8 +1,4 @@
-import type {
-  TRestoreAction,
-  TSanitizeAction,
-  TStoreReducer,
-} from "../../src/shared.ts";
+import type { TRestoreAction, TSanitizeAction, TStoreReducer } from "../../src/shared.ts";
 
 /**
  * The shared types + reducer for the todo example.
@@ -61,11 +57,7 @@ function encode(state: TodoState): Uint8Array {
  * the server and every client apply the exact same action to reach the same
  * state.
  */
-export const reducer: TStoreReducer<Action, Context> = (
-  file,
-  _context,
-  action,
-): Uint8Array => {
+export const reducer: TStoreReducer<Action, Context> = (file, _context, action): Uint8Array => {
   const state = decode(file);
   switch (action.kind) {
     case "AddTodo":

@@ -17,10 +17,14 @@ export interface DispatcherParams<Action> {
   onDispatched: () => void;
 }
 
-export function createDispatcher<Action>(
-  { signal, store, sender, opfsClient, onDispatchError, onDispatched }:
-    DispatcherParams<Action>,
-): Dispatcher {
+export function createDispatcher<Action>({
+  signal,
+  store,
+  sender,
+  opfsClient,
+  onDispatchError,
+  onDispatched,
+}: DispatcherParams<Action>): Dispatcher {
   const dispatchQueue = createQueue(signal);
 
   return {
@@ -33,10 +37,7 @@ export function createDispatcher<Action>(
       try {
         // Inside the lock: read state, generate TS, add to pending,
         // check if DB changed (another tab), save state, return results.
-        const result = await opfsClient.dispatchInLock(
-          action,
-          store.getServerVersion(),
-        );
+        const result = await opfsClient.dispatchInLock(action, store.getServerVersion());
         store.applyDispatchResult(result);
         // Wake the sender to send the new action
         sender.wake();

@@ -10,27 +10,26 @@ export interface SyncerParams<Action> {
   onPatchError: (version: string, error: unknown) => void;
 }
 
-export function createSyncer<Action>(
-  { apiClient, clientId, signal, store, onPatchError }: SyncerParams<Action>,
-): void {
+export function createSyncer<Action>({
+  apiClient,
+  clientId,
+  signal,
+  store,
+  onPatchError,
+}: SyncerParams<Action>): void {
   const applyPatchQueue = createQueue(signal);
 
   runSyncLoop();
   return;
 
   async function runSyncLoop(): Promise<void> {
-    for await (
-      const message of apiClient.sync(
-        signal,
-        clientId,
-        () => store.getServerContent(),
-      )
-    ) {
+    for await (const message of apiClient.sync(signal, clientId, () => store.getServerContent())) {
       if (message.name === "Connected") {
         continue;
       }
       if (
-        message.name === "InitialPatch" || message.name === "UpToDate" ||
+        message.name === "InitialPatch" ||
+        message.name === "UpToDate" ||
         message.name === "Patch"
       ) {
         // Await so the for-await loop applies TCP backpressure: the stream

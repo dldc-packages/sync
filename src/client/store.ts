@@ -1,9 +1,5 @@
 import type { TRestoreAction, TStoreReducer } from "../shared/types.ts";
-import type {
-  DispatchResult,
-  OpfsClient,
-  SanitizedPendingAction,
-} from "./opfs.ts";
+import type { DispatchResult, OpfsClient, SanitizedPendingAction } from "./opfs.ts";
 import { createPendingStore } from "./pendings.ts";
 import type { PendingAction } from "./types.ts";
 
@@ -32,19 +28,17 @@ export interface StoreParams<Action, Context> {
   onStateChange: (pendingCount: number) => void;
 }
 
-export function createStore<Action, Context>(
-  {
-    context,
-    initialServerVersion,
-    initialPending,
-    initialDatabase,
-    opfsClient,
-    restoreAction,
-    reducer,
-    onDatabase,
-    onStateChange,
-  }: StoreParams<Action, Context>,
-): Store<Action> {
+export function createStore<Action, Context>({
+  context,
+  initialServerVersion,
+  initialPending,
+  initialDatabase,
+  opfsClient,
+  restoreAction,
+  reducer,
+  onDatabase,
+  onStateChange,
+}: StoreParams<Action, Context>): Store<Action> {
   let serverContent: Uint8Array = initialDatabase;
   let serverVersion: string | null = initialServerVersion;
   const pendingsStore = createPendingStore(initialPending, restoreAction);
@@ -64,11 +58,7 @@ export function createStore<Action, Context>(
     patch: Uint8Array | null,
     clientLastApplied: string | null,
   ) {
-    const result = await opfsClient.applyPatchInLock(
-      version,
-      patch,
-      clientLastApplied,
-    );
+    const result = await opfsClient.applyPatchInLock(version, patch, clientLastApplied);
     if (result.serverContent !== null) {
       serverContent = result.serverContent;
       serverVersion = result.serverVersion;
@@ -83,20 +73,12 @@ export function createStore<Action, Context>(
   }
 
   function applyDispatchResult(result: DispatchResult) {
-    applyStateChange(
-      result.serverContent,
-      result.serverVersion,
-      result.pending,
-    );
+    applyStateChange(result.serverContent, result.serverVersion, result.pending);
   }
 
   async function refreshFromOpfs() {
     const result = await opfsClient.refreshState(serverVersion);
-    applyStateChange(
-      result.serverContent,
-      result.serverVersion,
-      result.pending,
-    );
+    applyStateChange(result.serverContent, result.serverVersion, result.pending);
   }
 
   /**
@@ -142,10 +124,7 @@ export function createStore<Action, Context>(
    * Each `reducer()` call deserializes -> applies -> exports. For N pending
    * actions this is O(N x DB_size); acceptable for small pending lists.
    */
-  function rebase(
-    content: Uint8Array,
-    pendingActions: PendingAction<Action>[],
-  ): Uint8Array {
+  function rebase(content: Uint8Array, pendingActions: PendingAction<Action>[]): Uint8Array {
     if (pendingActions.length === 0) return content;
     let result = content;
     for (const { action } of pendingActions) {

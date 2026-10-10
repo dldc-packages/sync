@@ -1,4 +1,5 @@
-import { Database } from "@db/sqlite";
+import { mkdirSync } from "node:fs";
+import "temporal-polyfill/global";
 import {
   Column,
   Datatype,
@@ -7,7 +8,8 @@ import {
   type TOperation,
   type TOperationResult,
 } from "@dldc/zendb";
-import { DbSqliteDriver } from "@dldc/zendb-db-sqlite";
+import { BetterSqliteDriver } from "@dldc/zendb-better-sqlite3";
+import Database from "better-sqlite3";
 import { compareHLC, parseHLC } from "../shared/hlc.ts";
 
 export interface TStateDb {
@@ -21,9 +23,7 @@ export interface TStateDbParams {
   stateDatabasePath: string;
 }
 
-export async function createStateDb(
-  { stateDatabasePath }: TStateDbParams,
-): Promise<TStateDb> {
+export async function createStateDb({ stateDatabasePath }: TStateDbParams): Promise<TStateDb> {
   const MAIN_DB_VERSION_KEY = "mainDbVersion";
 
   const stateSchemaDef = Schema.declare({
@@ -39,7 +39,7 @@ export async function createStateDb(
   });
 
   const stateMigration = Migration.init(
-    DbSqliteDriver,
+    BetterSqliteDriver,
     stateSchemaDef,
     ({ database }) => database,
   );
@@ -48,9 +48,9 @@ export async function createStateDb(
 
   // Ensure the parent directory exists (native SQLite won't create it).
   const dir = dirname(stateDatabasePath);
-  Deno.mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true });
 
-  // Open the file-backed DB. Native SQLite persists writes directly to disk.
+  // Open the file-backed DB. better-sqlite3 persists writes directly to disk.
   const initDb = new Database(stateDatabasePath);
   const [migratedDb, shouldPersist] = await stateMigration.apply(initDb);
 
@@ -58,10 +58,9 @@ export async function createStateDb(
   if (shouldPersist) {
     // Migration produced an in-memory DB (createDatabase returns ":memory:").
     // Persist it back to the file by backing up into a fresh on-disk DB.
-    const diskDb = new Database(stateDatabasePath);
-    migratedDb.backup(diskDb);
+    await migratedDb.backup(stateDatabasePath);
     migratedDb.close();
-    db = diskDb;
+    db = new Database(stateDatabasePath);
   }
 
   return {
@@ -72,14 +71,12 @@ export async function createStateDb(
   };
 
   function exec<Op extends TOperation>(op: Op): TOperationResult<Op> {
-    return DbSqliteDriver.exec(db, op);
+    return BetterSqliteDriver.exec(db, op);
   }
 
   function getClientLastApplied(clientId: string): string | null {
     const result = exec(
-      stateSchema.tables.clientState.query()
-        .andFilterEqual({ clientId })
-        .maybeOne(),
+      stateSchema.tables.clientState.query().andFilterEqual({ clientId }).maybeOne(),
     );
     if (result === null) return null;
     return result.clientLastApplied ?? null;
@@ -108,9 +105,7 @@ export async function createStateDb(
   /** Read the persisted version UUID of the main app DB. */
   function getDbVersion(): string | null {
     const result = exec(
-      stateSchema.tables.dbMeta.query()
-        .andFilterEqual({ metaKey: MAIN_DB_VERSION_KEY })
-        .maybeOne(),
+      stateSchema.tables.dbMeta.query().andFilterEqual({ metaKey: MAIN_DB_VERSION_KEY }).maybeOne(),
     );
     if (result === null) return null;
     return result.value;
@@ -118,9 +113,7 @@ export async function createStateDb(
 
   /** Persist the version UUID of the main app DB (upsert). */
   function setDbVersion(version: string): void {
-    exec(
-      stateSchema.tables.dbMeta.deleteEqual({ metaKey: MAIN_DB_VERSION_KEY }),
-    );
+    exec(stateSchema.tables.dbMeta.deleteEqual({ metaKey: MAIN_DB_VERSION_KEY }));
     exec(
       stateSchema.tables.dbMeta.insert({
         metaKey: MAIN_DB_VERSION_KEY,

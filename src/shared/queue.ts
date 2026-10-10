@@ -33,7 +33,10 @@ export function createQueue(signal?: AbortSignal): TQueue {
       throwIfAborted(signal);
       return await task();
     });
-    currentPromise = resultPromise.then(() => undefined, () => undefined);
+    currentPromise = resultPromise.then(
+      () => undefined,
+      () => undefined,
+    );
     return resultPromise;
   }
 

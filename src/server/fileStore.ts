@@ -1,9 +1,6 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { diff, signature } from "@dldc/librsync";
-import {
-  createSubscription,
-  type TSubscriptionCallback,
-  type TUnsubscribe,
-} from "@dldc/pubsub";
+import { createSubscription, type TSubscriptionCallback, type TUnsubscribe } from "@dldc/pubsub";
 
 export interface TStoreUpdateContext {
   clientId: string | null;
@@ -21,10 +18,7 @@ export interface TFileStore {
   getCurrent(): Uint8Array;
   compare(data: Uint8Array): { patch: Uint8Array | null; version: string };
   subscribe(callback: TSubscriptionCallback<TFileStoreEvent>): TUnsubscribe;
-  update(
-    updater: (current: Uint8Array) => Uint8Array,
-    context: TStoreUpdateContext,
-  ): void;
+  update(updater: (current: Uint8Array) => Uint8Array, context: TStoreUpdateContext): void;
 }
 
 export interface FileStoreParams {
@@ -33,9 +27,11 @@ export interface FileStoreParams {
   filePath: string;
 }
 
-export function createFileStore(
-  { getDbVersion, setDbVersion, filePath }: FileStoreParams,
-): TFileStore {
+export function createFileStore({
+  getDbVersion,
+  setDbVersion,
+  filePath,
+}: FileStoreParams): TFileStore {
   const subscriptions = createSubscription<TFileStoreEvent>();
   let content: Uint8Array = readFileOrEmpty(filePath);
   // Read persisted version from the state DB (survives restarts). If none
@@ -55,9 +51,7 @@ export function createFileStore(
     return content;
   }
 
-  function compare(
-    checksum: Uint8Array,
-  ): { patch: Uint8Array | null; version: string } {
+  function compare(checksum: Uint8Array): { patch: Uint8Array | null; version: string } {
     const blockSize = readBlockSize(checksum);
     const currentChecksum = signature(content, blockSize);
     if (filesEqual(checksum, currentChecksum)) {
@@ -87,7 +81,7 @@ export function createFileStore(
     // unsafe: a crash between would give new content + old version, causing
     // clients to skip the patch (version dedup) and miss the update.
     setDbVersion(newVersion);
-    Deno.writeFileSync(filePath, newContent);
+    writeFileSync(filePath, newContent);
     content = newContent;
     version = newVersion;
     subscriptions.emit({
@@ -101,9 +95,14 @@ export function createFileStore(
 
 function readFileOrEmpty(path: string): Uint8Array {
   try {
-    return Deno.readFileSync(path);
+    return readFileSync(path);
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
+    if (
+      typeof e === "object" &&
+      e !== null &&
+      "code" in e &&
+      (e as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
       return new Uint8Array();
     }
     throw e;

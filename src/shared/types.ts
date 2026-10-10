@@ -4,13 +4,9 @@ export type TStoreReducer<Action, Context> = (
   action: Action,
 ) => Uint8Array;
 
-export type TGetStoreReducer<Action, Context> = () => Promise<
-  TStoreReducer<Action, Context>
->;
+export type TGetStoreReducer<Action, Context> = () => Promise<TStoreReducer<Action, Context>>;
 
-export type TGetContext<Context> = (
-  signal: AbortSignal,
-) => Promise<Context | null>;
+export type TGetContext<Context> = (signal: AbortSignal) => Promise<Context | null>;
 
 export type TSanitizeContext<Context> = (context: Context) => unknown;
 

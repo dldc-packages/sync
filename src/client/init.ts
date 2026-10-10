@@ -38,20 +38,18 @@ export interface InitParams<Action, Context> {
   getContextTimeoutMs: number;
 }
 
-export async function init<Action, Context>(
-  {
-    onNoContextError,
-    onUnauthorized,
-    getContext,
-    getReducer,
-    sanitizeContext,
-    dbFileName,
-    stateFileName,
-    maxStoredErrors,
-    opfsLockName,
-    getContextTimeoutMs,
-  }: InitParams<Action, Context>,
-): Promise<EngineInit<Action, Context> | null> {
+export async function init<Action, Context>({
+  onNoContextError,
+  onUnauthorized,
+  getContext,
+  getReducer,
+  sanitizeContext,
+  dbFileName,
+  stateFileName,
+  maxStoredErrors,
+  opfsLockName,
+  getContextTimeoutMs,
+}: InitParams<Action, Context>): Promise<EngineInit<Action, Context> | null> {
   const opfsClient = createOpfsClient({
     dbFileName,
     stateFileName,
@@ -62,10 +60,7 @@ export async function init<Action, Context>(
   // In parallel
   // - load the reducer
   // - restore existing state from opfs + restore or fetch context
-  const [init, reducer] = await Promise.all([
-    initOpfsAndRestoreContext(),
-    getReducer(),
-  ]);
+  const [init, reducer] = await Promise.all([initOpfsAndRestoreContext(), getReducer()]);
 
   if (!init) {
     return null;
@@ -77,9 +72,10 @@ export async function init<Action, Context>(
     opfsClient,
   };
 
-  async function initOpfsAndRestoreContext(): Promise<
-    Omit<EngineInit<Action, Context>, "reducer" | "opfsClient"> | null
-  > {
+  async function initOpfsAndRestoreContext(): Promise<Omit<
+    EngineInit<Action, Context>,
+    "reducer" | "opfsClient"
+  > | null> {
     // Load persisted state + DB from OPFS (under the lock) — load BEFORE getMe
     // so we can fall back to the saved context if the network is unavailable.
     const {
@@ -104,10 +100,7 @@ export async function init<Action, Context>(
           return null;
         }
         // Network failure or timeout — fall back to the saved context.
-        console.warn(
-          "[init] getMe failed, falling back to saved context:",
-          err,
-        );
+        console.warn("[init] getMe failed, falling back to saved context:", err);
         context = savedContext;
       }
     } else {
@@ -132,10 +125,7 @@ export async function init<Action, Context>(
   /** Calls getMe with an abort timeout so we don't block startup on a slow network. */
   async function getContextWithTimeout(): Promise<SanitizedContext | null> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      getContextTimeoutMs,
-    );
+    const timeoutId = setTimeout(() => controller.abort(), getContextTimeoutMs);
     try {
       const ctx = await getContext(controller.signal);
       if (ctx !== null) {

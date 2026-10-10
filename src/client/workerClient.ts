@@ -1,8 +1,4 @@
-import {
-  createSubscription,
-  type TSubscriptionCallback,
-  type TUnsubscribe,
-} from "@dldc/pubsub";
+import { createSubscription, type TSubscriptionCallback, type TUnsubscribe } from "@dldc/pubsub";
 import { createDeferred, type TDeferred } from "../shared/deferred.ts";
 import type { TRestoreContext, TSanitizeAction } from "../shared/types.ts";
 import type { TDebugState } from "./opfs.ts";
@@ -10,12 +6,8 @@ import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export interface WorkerClient<Action, Context> {
   ready(): Promise<void>;
-  subscribeDatabase(
-    callback: TSubscriptionCallback<Uint8Array>,
-  ): TUnsubscribe;
-  subscribeDebugState(
-    callback: TSubscriptionCallback<TDebugState>,
-  ): TUnsubscribe;
+  subscribeDatabase(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
+  subscribeDebugState(callback: TSubscriptionCallback<TDebugState>): TUnsubscribe;
   getDatabase(): Uint8Array;
   getDatabaseVersion(): number;
   getContext(): Context;
@@ -41,12 +33,11 @@ export interface TWorkerClientParams<Action, Context> {
   restoreContext: TRestoreContext<Context>;
 }
 
-export function createWorkerClient<Action, Context>(
-  { worker, sanitizeAction, restoreContext }: TWorkerClientParams<
-    Action,
-    Context
-  >,
-): WorkerClient<Action, Context> {
+export function createWorkerClient<Action, Context>({
+  worker,
+  sanitizeAction,
+  restoreContext,
+}: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
   const databaseSubscriptions = createSubscription<Uint8Array>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
 

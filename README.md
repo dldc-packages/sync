@@ -51,10 +51,15 @@ The quickest way to see it working is the runnable
 [todo example](./examples/todo/), which stores its data as JSON:
 
 ```sh
-cd examples/todo
-deno task dev
+# Terminal 1 — the Node server (rsync + dispatch, port 3000)
+pnpm example:todo
+
+# Terminal 2 — the Vite dev server (port 5173), proxying /api -> :3000
+pnpm example:todo:client
 # open http://localhost:5173 (open in two tabs to see live sync)
 ```
+
+Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`.
 
 ### Server
 
@@ -75,8 +80,8 @@ const store = await createStore({
 
 `createStore` gives you `sync()` and `dispatch()` which you wire up to your HTTP
 framework. The `filePath` is your actual data (e.g. JSON); `stateDatabasePath`
-is SQLite used internally to track per-client last-applied timestamps and file
-versions across restarts.
+is a SQLite database (via `better-sqlite3`) used internally to track per-client
+last-applied timestamps and file versions across restarts.
 
 ### Reducer + types (shared)
 

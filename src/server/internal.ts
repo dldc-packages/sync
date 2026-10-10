@@ -5,8 +5,4 @@ export {
   type TFileStoreEvent,
   type TStoreUpdateContext,
 } from "./fileStore.ts";
-export {
-  createStateDb,
-  type TStateDb,
-  type TStateDbParams,
-} from "./stateDb.ts";
+export { createStateDb, type TStateDb, type TStateDbParams } from "./stateDb.ts";

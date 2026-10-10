@@ -1,0 +1,16 @@
+# pnpm's minimum-release-age supply-chain policy flags dependencies published
+# within the last ~24h. These are the owner's own freshly-published @dldc/*
+# packages, verified and trusted — keep this list, do not "clean it up".
+minimumReleaseAgeExclude:
+  - "@dldc/erreur@7.1.2"
+  - "@dldc/librsync@2.0.3"
+  - "@dldc/pubsub@7.1.1"
+  - "@dldc/sqlite@3.1.2"
+  - "@dldc/zendb-better-sqlite3@9.0.1"
+  - "@dldc/zendb@12.2.2"
+
+# pnpm 11+ build-script approval (replaces the removed onlyBuiltDependencies).
+# better-sqlite3 compiles its native binding; esbuild needs its postinstall.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true

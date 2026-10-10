@@ -1,12 +1,20 @@
-import deno from "@deno/vite-plugin";
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
 
-// The browser client is served by Vite; the Deno server (server.ts) handles the
-// /api routes. Vite proxies /api to the long-running Deno server.
-export default defineConfig({
-  plugins: [deno()],
+const root = fileURLToPath(new URL(".", import.meta.url));
+
+// The browser client is served by Vite; the Node server (server.ts) handles the
+// /api routes. Vite proxies /api to the long-running Node server.
+//
+// This is a plain config object (no `vite` import): the CLI runs from the
+// package root, where `vite` itself is provided by the Vite+ toolchain rather
+// than a hoisted package, and a bare import would fail to resolve from here.
+export default {
+  root,
+  build: {
+    outDir: `${root}/dist`,
+  },
   worker: {
-    plugins: () => [deno()],
+    format: "es",
   },
   server: {
     port: 5173,
@@ -15,4 +23,4 @@ export default defineConfig({
       "/api": "http://localhost:3000",
     },
   },
-});
+};

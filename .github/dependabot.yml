@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # Keep the pinned setup-vp action current (the moving v1 tag is frozen).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

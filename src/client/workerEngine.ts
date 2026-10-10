@@ -40,26 +40,24 @@ export interface TWorkerEngineParams<Action, Context> {
   syncPath: (clientId: string) => string;
 }
 
-export function createWorkerEngine<Action, Context>(
-  {
-    crossTabDispatchChannelName,
-    dbFileName,
-    dispatchPath,
-    getContext,
-    getContextTimeoutMs,
-    getReducer,
-    maxStoredErrors,
-    opfsLockName,
-    reconnectBaseDelay,
-    reconnectMaxDelay,
-    restoreAction,
-    restoreContext,
-    sanitizeContext,
-    sendLockName,
-    stateFileName,
-    syncPath,
-  }: TWorkerEngineParams<Action, Context>,
-): TWorkerEngine {
+export function createWorkerEngine<Action, Context>({
+  crossTabDispatchChannelName,
+  dbFileName,
+  dispatchPath,
+  getContext,
+  getContextTimeoutMs,
+  getReducer,
+  maxStoredErrors,
+  opfsLockName,
+  reconnectBaseDelay,
+  reconnectMaxDelay,
+  restoreAction,
+  restoreContext,
+  sanitizeContext,
+  sendLockName,
+  stateFileName,
+  syncPath,
+}: TWorkerEngineParams<Action, Context>): TWorkerEngine {
   const syncController = new AbortController();
 
   let debugState: TDebugState = { pendingCount: 0, errors: [] };
@@ -75,7 +73,7 @@ export function createWorkerEngine<Action, Context>(
 
   return {
     handleMessage(event: MessageEvent) {
-      handleMessage((event.data) as TWorkerInMessage);
+      handleMessage(event.data as TWorkerInMessage);
     },
     start,
   };
@@ -123,20 +121,12 @@ export function createWorkerEngine<Action, Context>(
     error: unknown,
     dedupKey?: string,
   ): Promise<void> {
-    const message = error instanceof Error
-      ? error.message.split("\n")[0]
-      : String(error).split("\n")[0];
-    const stack = error instanceof Error
-      ? (error.stack ?? String(error))
-      : String(error);
+    const message =
+      error instanceof Error ? error.message.split("\n")[0] : String(error).split("\n")[0];
+    const stack = error instanceof Error ? (error.stack ?? String(error)) : String(error);
     try {
       if (opfsClient) {
-        const state = await opfsClient.addError(
-          kind,
-          message,
-          stack,
-          dedupKey ?? message,
-        );
+        const state = await opfsClient.addError(kind, message, stack, dedupKey ?? message);
         updateDebugState(state);
       }
     } catch (err) {

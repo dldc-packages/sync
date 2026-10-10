@@ -1,8 +1,4 @@
-import {
-  decode as decodeMsgPack,
-  encode as encodeMsgPack,
-  type ValueType,
-} from "@std/msgpack";
+import { decode as decodeMsgPack, encode as encodeMsgPack } from "@msgpack/msgpack";
 
 /**
  * Use msgpack to encode and decode messages.
@@ -28,9 +24,7 @@ export type UnionFromMap<T extends Record<string, any>> = {
 
 export type TStreamTransportReader<Msg> = AsyncIterable<Msg>;
 
-export function streamTransportReader<Msg>(
-  reader: TStreamReader,
-): TStreamTransportReader<Msg> {
+export function streamTransportReader<Msg>(reader: TStreamReader): TStreamTransportReader<Msg> {
   return {
     [Symbol.asyncIterator]: async function* () {
       let buffer = new Uint8Array(0);
@@ -71,11 +65,9 @@ export function streamTransportReader<Msg>(
 
 export type TStreamTransportWriter<Msg> = (message: Msg) => void;
 
-export function streamTransportWriter<Msg>(
-  writer: TStreamWriter,
-): TStreamTransportWriter<Msg> {
+export function streamTransportWriter<Msg>(writer: TStreamWriter): TStreamTransportWriter<Msg> {
   return function syncTransportWriter(message: Msg): void {
-    const encoded = encodeMsgPack(message as ValueType);
+    const encoded = encodeMsgPack(message);
     const encodedLength = encoded.byteLength;
     writer.write(writeUint32(encodedLength));
     writer.write(encoded);
@@ -111,18 +103,13 @@ export function streamTransportReadAll<Msg>(content: Uint8Array): Msg[] {
   return messages;
 }
 
-export function streamTransportWriteAll<Msg>(
-  messages: Msg[],
-): Uint8Array {
+export function streamTransportWriteAll<Msg>(messages: Msg[]): Uint8Array {
   const encodedItems = messages.map((message) => {
-    const encoded = encodeMsgPack(message as ValueType);
+    const encoded = encodeMsgPack(message);
     const encodedLength = encoded.byteLength;
     return { encodedLength, encoded };
   });
-  const totalLength = encodedItems.reduce(
-    (acc, { encodedLength }) => acc + 4 + encodedLength,
-    0,
-  );
+  const totalLength = encodedItems.reduce((acc, { encodedLength }) => acc + 4 + encodedLength, 0);
   const result = new Uint8Array(totalLength);
   let offset = 0;
   for (const { encodedLength, encoded } of encodedItems) {

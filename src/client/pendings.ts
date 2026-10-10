@@ -35,9 +35,7 @@ export function createPendingStore<Action>(
    * Given a new sanitized pending list, update the internal cache and return the new PendingAction list.
    * @returns
    */
-  function setPendings(
-    sanitized: SanitizedPendingAction[],
-  ): SetPendingsResult<Action> {
+  function setPendings(sanitized: SanitizedPendingAction[]): SetPendingsResult<Action> {
     const appended = appendedPending(pendings, sanitized);
     if (appended !== null) {
       appended.forEach((pending) => {
@@ -64,9 +62,7 @@ export function createPendingStore<Action>(
     return { appended: null };
   }
 
-  function restorePending(
-    sanitized: SanitizedPendingAction,
-  ): PendingAction<Action> {
+  function restorePending(sanitized: SanitizedPendingAction): PendingAction<Action> {
     return {
       ts: sanitized.ts,
       action: restoreAction(sanitized.action._action),

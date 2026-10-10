@@ -4,19 +4,51 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
 
 jobs:
+  validate:
+    if: startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: voidzero-dev/setup-vp@v1.21.2
+        with:
+          cache: true
+
+      - run: vp check
+
+      - run: vp test run
+
+      - run: vp pack
+
+      # Example-app e2e smoke test (builds the client, boots the Node server,
+      # runs the Playwright suite against headless Chromium)
+      - run: npx playwright install chromium
+      - run: pnpm example:todo:e2e
+
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v1
+
+      # No `registry-url`: v1.21.2+ would write an empty auth token to .npmrc
+      # and block the OIDC exchange. npm >= 11.5.1 performs the OIDC exchange
+      # automatically when NODE_AUTH_TOKEN is absent. cache is off for releases.
+      - uses: voidzero-dev/setup-vp@v1.21.2
         with:
-          deno-version: v2.x
+          cache: false
 
-      - run: deno task check
+      - run: vp check
 
-      - run: npx jsr publish
+      - run: vp test run
+
+      - run: vp pack
+
+      - run: npm publish --access public

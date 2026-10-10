@@ -20,9 +20,9 @@ See [`shared.ts`](./shared.ts) for the reducer and types.
 ```
 todo/
 ├── shared.ts          # types + the JSON reducer + sanitize/restore (shared client/server)
-├── server.ts          # Deno server: createStore + /api/client/:id/{sync,dispatch}
+├── server.ts          # Node server: createStore + /api/client/:id/{sync,dispatch}
 ├── index.html         # browser entry
-├── vite.config.ts     # dev server; proxies /api to the Deno server
+├── vite.config.ts     # dev server; proxies /api to the Node server
 └── client/
     ├── main.ts        # UI, talks to the worker via createWorkerClient
     ├── worker.ts      # createWorkerEngine: local copy, reducer, sync + send loops
@@ -30,7 +30,8 @@ todo/
 ```
 
 - **`server.ts`** calls `createStore` with `filePath` (the JSON todo file) and
-  `stateDatabasePath` (SQLite — internal bookkeeping only, not the app data).
+  `stateDatabasePath` (SQLite via `better-sqlite3` — internal bookkeeping only,
+  not the app data).
 - **`client/worker.ts`** runs the engine in a Web Worker: it keeps a local copy
   of the JSON file in OPFS, applies the same reducer locally for instant
   updates, and syncs with the server via rsync.
@@ -38,26 +39,35 @@ todo/
 
 ## Run it
 
-Two processes (like mimo-stats): a Deno API server and a Vite dev server.
-
-Dependencies (including the `vite` / `@deno/vite-plugin` toolchain) are declared
-in [`deno.json`](./deno.json) and resolved automatically by Deno on first run.
+Two processes (like mimo-stats): a Node API server and a Vite dev server.
+Everything resolves from the **repo root** via pnpm — run the scripts there:
 
 ```sh
-deno task dev
+# Terminal 1 — the Node API server (port 3000)
+pnpm example:todo
+
+# Terminal 2 — the Vite dev server (port 5173), proxying /api -> :3000
+pnpm example:todo:client
 ```
 
 - Vite: http://localhost:5173 (open this in a browser)
-- Deno API server: http://localhost:3000
+- Node API server: http://localhost:3000
 
 Open the page in two tabs/windows to watch changes sync live.
 
-> If port 5173 is already taken (e.g. another dev server), run the two tasks
-> separately and change the `server.port` in
-> [`vite.config.ts`](./vite.config.ts).
+> `@dldc/sync`'s internal state DB is SQLite via `@dldc/zendb-better-sqlite3`
+> (better-sqlite3's native binding is compiled on install). Only the _app data_
+> is JSON.
 
-> `@dldc/sync`'s internal state DB is SQLite (needs `--unstable-ffi`, already in
-> the `server:dev` task). Only the _app data_ is JSON.
+## End-to-end tests
+
+The E2E suite builds the client, boots a real Node server + headless Chromium,
+and runs Playwright against it (cross-tab, cross-device, and a multi-client
+convergence stress test):
+
+```sh
+pnpm example:todo:e2e   # vite build && vitest run (Playwright)
+```
 
 ## How the reducer stores data
 
@@ -75,7 +85,7 @@ then reconciles via rsync.
 ## Testing the server manually
 
 ```sh
-deno run -A --unstable-ffi --unstable-no-legacy-abort ./server.ts
+pnpm example:todo        # from the repo root — boots the Node server
 ```
 
 ```sh

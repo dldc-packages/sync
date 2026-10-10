@@ -39,17 +39,15 @@ const BACKOFF_MAX_ATTEMPTS = 10;
  * (HTTP 200) but not yet acked by sync, the sender won't re-send it on restart.
  * The server's `updateClientLastApplied` dedups in case of re-send anyway.
  */
-export function createSender(
-  {
-    apiClient,
-    clientId,
-    onExhausted,
-    onUnauthorized,
-    opfsClient,
-    signal,
-    sendLockName,
-  }: SenderParams,
-): Sender {
+export function createSender({
+  apiClient,
+  clientId,
+  onExhausted,
+  onUnauthorized,
+  opfsClient,
+  signal,
+  sendLockName,
+}: SenderParams): Sender {
   let loopRunning = false;
 
   // Start immediately (sends any pending from a previous session).
@@ -65,9 +63,8 @@ export function createSender(
 
   async function sendLoop(): Promise<void> {
     while (!signal.aborted) {
-      const result = await withLock(
-        sendLockName,
-        () => sendWithRetry(clientId, signal, onExhausted),
+      const result = await withLock(sendLockName, () =>
+        sendWithRetry(clientId, signal, onExhausted),
       );
       if (!result.shouldContinue) break;
     }
@@ -91,11 +88,7 @@ export function createSender(
     for (let attempt = 0; attempt < BACKOFF_MAX_ATTEMPTS; attempt++) {
       if (signal.aborted) return { shouldContinue: false };
       try {
-        await apiClient.dispatchAction(
-          clientId,
-          sanitizedPending.action,
-          sanitizedPending.ts,
-        );
+        await apiClient.dispatchAction(clientId, sanitizedPending.action, sanitizedPending.ts);
         await opfsClient.markPendingAsSent(sanitizedPending.ts);
         return { shouldContinue: true };
       } catch (err) {

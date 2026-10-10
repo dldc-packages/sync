@@ -1,13 +1,13 @@
-import { expect } from "@std/expect";
+import { expect, test } from "vite-plus/test";
 import { createQueue } from "./queue.ts";
 
-Deno.test("createQueue runs a single task", async () => {
+test("createQueue runs a single task", async () => {
   const queue = createQueue();
   const result = await queue.run(() => Promise.resolve(7));
   expect(result).toBe(7);
 });
 
-Deno.test("createQueue runs tasks sequentially in submission order", async () => {
+test("createQueue runs tasks sequentially in submission order", async () => {
   const queue = createQueue();
   const order: number[] = [];
 
@@ -28,7 +28,7 @@ Deno.test("createQueue runs tasks sequentially in submission order", async () =>
   expect(order).toEqual([1, 2, 3]);
 });
 
-Deno.test("createQueue forwards task results", async () => {
+test("createQueue forwards task results", async () => {
   const queue = createQueue();
   const a = queue.run(() => Promise.resolve("a"));
   const b = queue.run(() => Promise.resolve("b"));
@@ -36,7 +36,7 @@ Deno.test("createQueue forwards task results", async () => {
   expect(await b).toBe("b");
 });
 
-Deno.test("createQueue does not block subsequent tasks after a failure", async () => {
+test("createQueue does not block subsequent tasks after a failure", async () => {
   const queue = createQueue();
   const t1 = queue.run(() => Promise.reject(new Error("fail")));
   const t2 = queue.run(() => Promise.resolve("ok"));
@@ -45,7 +45,7 @@ Deno.test("createQueue does not block subsequent tasks after a failure", async (
   expect(await t2).toBe("ok");
 });
 
-Deno.test("createQueue end resolves when all queued tasks settle", async () => {
+test("createQueue end resolves when all queued tasks settle", async () => {
   const queue = createQueue();
   queue.run(async () => {
     await delay(10);
@@ -57,7 +57,7 @@ Deno.test("createQueue end resolves when all queued tasks settle", async () => {
   expect(true).toBe(true);
 });
 
-Deno.test("createQueue aborts tasks that have not started yet", async () => {
+test("createQueue aborts tasks that have not started yet", async () => {
   const controller = new AbortController();
   const queue = createQueue(controller.signal);
 

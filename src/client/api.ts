@@ -1,8 +1,5 @@
 import { signature } from "@dldc/librsync";
-import {
-  fileSyncTransportReader,
-  type TFileSyncMessage,
-} from "../shared/fileSync.ts";
+import { fileSyncTransportReader, type TFileSyncMessage } from "../shared/fileSync.ts";
 import { assertOk, UnauthorizedError } from "./errors.ts";
 import type { SanitizedAction } from "./opfs.ts";
 
@@ -22,11 +19,7 @@ export interface ApiClient {
     getContent: () => Uint8Array,
   ): AsyncIterable<TFileSyncMessage>;
 
-  dispatchAction(
-    clientId: string,
-    action: SanitizedAction,
-    ts: string,
-  ): Promise<void>;
+  dispatchAction(clientId: string, action: SanitizedAction, ts: string): Promise<void>;
 }
 
 export interface ApiClientParams {
@@ -40,15 +33,13 @@ export interface ApiClientParams {
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 30_000;
 
-export function createApiClient(
-  {
-    reconnectBaseDelay = RECONNECT_BASE_DELAY,
-    reconnectMaxDelay = RECONNECT_MAX_DELAY,
-    syncPath,
-    dispatchPath,
-    onUnauthorized,
-  }: ApiClientParams,
-): ApiClient {
+export function createApiClient({
+  reconnectBaseDelay = RECONNECT_BASE_DELAY,
+  reconnectMaxDelay = RECONNECT_MAX_DELAY,
+  syncPath,
+  dispatchPath,
+  onUnauthorized,
+}: ApiClientParams): ApiClient {
   return {
     sync,
     dispatchAction,

@@ -1,11 +1,9 @@
-# Deno
-# https://deno.com/
-
-# Cache directory (when using project-local DENO_DIR)
-# https://docs.deno.com/runtime/fundamentals/setup/#deno_dir
-.deno/
-
-# Coverage reports
-# https://docs.deno.com/runtime/reference/cli/coverage/
+node_modules/
+dist/
 coverage/
-*.lcov
+.vitest/
+pnpm-debug.log*
+*.tgz
+examples/todo/.data/
+examples/todo/node_modules/
+examples/todo/dist/
