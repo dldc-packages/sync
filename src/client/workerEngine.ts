@@ -29,6 +29,11 @@ export interface TWorkerEngineParams<Action, Context> {
   getContextTimeoutMs: number;
   getReducer: TGetStoreReducer<Action, Context>;
   maxStoredErrors: number;
+  /** Called in-process with every database content change (same content the
+   * main thread receives), once with the initial content on startup. Only
+   * valid for the duration of the call — copy it if it must be retained
+   * beyond the next emission. */
+  onDatabase?: (content: Uint8Array) => void;
   opfsLockName: string;
   reconnectBaseDelay?: number;
   reconnectMaxDelay?: number;
@@ -48,6 +53,7 @@ export function createWorkerEngine<Action, Context>({
   getContextTimeoutMs,
   getReducer,
   maxStoredErrors,
+  onDatabase,
   opfsLockName,
   reconnectBaseDelay,
   reconnectMaxDelay,
@@ -185,6 +191,9 @@ export function createWorkerEngine<Action, Context>({
       opfsClient,
       restoreAction,
       onDatabase: (content: Uint8Array) => {
+        // In-process hook first; the message path slices before transferring,
+        // so the hook's reference is never detached.
+        onDatabase?.(content);
         sendMessage({ kind: "Database", content: content.slice().buffer });
       },
       onStateChange: (pendingCount: number) => {
@@ -273,6 +282,10 @@ export function createWorkerEngine<Action, Context>({
       }
       message satisfies never;
     };
+
+    // Emit the initial content to the in-process hook (the store's onDatabase
+    // only fires on later changes), mirroring the Ready message below.
+    onDatabase?.(store.getLocalContent());
 
     sendMessage({
       kind: "Ready",
