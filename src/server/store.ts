@@ -1,7 +1,8 @@
 import * as v from "valibot";
+import type { TSubscriptionCallback, TUnsubscribe } from "@dldc/pubsub";
 import { fileSyncTransportWriter } from "../shared/fileSync.ts";
 import type { TGetStoreReducer, TRestoreAction } from "../shared/types.ts";
-import { createFileStore, type TStoreUpdateContext } from "./fileStore.ts";
+import { createFileStore, type TFileStoreEvent, type TStoreUpdateContext } from "./fileStore.ts";
 import { createStateDb } from "./stateDb.ts";
 
 export interface TStore<Context> {
@@ -9,6 +10,13 @@ export interface TStore<Context> {
   dispatch(bodyJson: unknown, clientId: string, context: Context): Response;
   getCurrent: () => Uint8Array;
   update(updater: (current: Uint8Array) => Uint8Array, context: TStoreUpdateContext): void;
+  /**
+   * Subscribe to every applied update — a client dispatch that the reducer
+   * applied, or a server-side `update`. The event is emitted once the new
+   * bytes are written, so `getCurrent()` inside the callback already returns
+   * them. Returns an unsubscribe function.
+   */
+  subscribe(callback: TSubscriptionCallback<TFileStoreEvent>): TUnsubscribe;
 }
 
 export interface StoreParams<Action, Context> {
@@ -42,6 +50,7 @@ export async function createStore<Action, Context>({
     sync,
     getCurrent: fileStore.getCurrent,
     update: fileStore.update,
+    subscribe: fileStore.subscribe,
   };
 
   function sync(clientSignature: Uint8Array, clientId: string, signal: AbortSignal): Response {
