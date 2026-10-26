@@ -7,3 +7,6 @@ pnpm-debug.log*
 examples/todo/.data/
 examples/todo/node_modules/
 examples/todo/dist/
+examples/optimistic/.data/
+examples/optimistic/node_modules/
+examples/optimistic/dist/

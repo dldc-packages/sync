@@ -1,0 +1,128 @@
+:root {
+  font-family: system-ui, sans-serif;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+h1 {
+  font-size: 1.25rem;
+}
+
+h2 {
+  font-size: 1rem;
+  margin-top: 2rem;
+}
+
+.muted {
+  color: #888;
+  font-weight: normal;
+  font-size: 0.9em;
+}
+
+#sync-badge {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+  border: 1px solid #ddd;
+}
+
+#sync-badge[data-synced="true"] {
+  border-color: #7bc67c;
+  background: #f0faf0;
+  color: #2c6e2c;
+}
+
+.sep {
+  color: #ccc;
+}
+
+#task-form {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+#task-input {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 1rem;
+}
+
+button {
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+}
+
+#task-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+#task-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 0.25rem;
+  padding: 0.4rem 0.5rem;
+}
+
+#task-list li.done label {
+  text-decoration: line-through;
+  color: #888;
+}
+
+.chip {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.chip-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.chip-applied {
+  background: #e0ecff;
+  color: #1d4ed8;
+}
+
+.chip-synced {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.hint {
+  font-size: 0.85rem;
+}
+
+#feed {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+#feed th,
+#feed td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+
+#feed .num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#feed tr.failed {
+  color: #b91c1c;
+}

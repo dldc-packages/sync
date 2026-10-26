@@ -190,11 +190,15 @@ export function createWorkerEngine<Action, Context>({
       initialServerVersion: serverVersion,
       opfsClient,
       restoreAction,
-      onDatabase: (content: Uint8Array) => {
+      onDatabase: (content: Uint8Array, dispatchedId?: number) => {
         // In-process hook first; the message path slices before transferring,
         // so the hook's reference is never detached.
         onDatabase?.(content);
-        sendMessage({ kind: "Database", content: content.slice().buffer });
+        sendMessage({
+          kind: "Database",
+          content: content.slice().buffer,
+          ...(dispatchedId === undefined ? {} : { dispatchedId }),
+        });
       },
       onStateChange: (pendingCount: number) => {
         debugState = { ...debugState, pendingCount };
@@ -257,7 +261,19 @@ export function createWorkerEngine<Action, Context>({
         return;
       }
       if (message.kind === "Dispatch") {
-        dispatcher.dispatch(message.action);
+        dispatcher.dispatch(message.action, message.id).then(
+          (ok) => {
+            if (message.ack) {
+              sendMessage({ kind: "Dispatched", id: message.id!, ok });
+            }
+          },
+          () => {
+            // Queue aborted (e.g. session expired while shutting down).
+            if (message.ack) {
+              sendMessage({ kind: "Dispatched", id: message.id!, ok: false });
+            }
+          },
+        );
         return;
       }
       if (message.kind === "ClearError") {

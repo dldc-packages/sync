@@ -61,6 +61,10 @@
     "example:todo:client": "vite --config examples/todo/vite.config.ts",
     "example:todo:build": "vite build --config examples/todo/vite.config.ts",
     "example:todo:e2e": "vite build --config examples/todo/vite.config.ts && vitest run --config examples/todo/vite.e2e.config.ts",
+    "example:optimistic": "tsx examples/optimistic/server.ts",
+    "example:optimistic:client": "vite --config examples/optimistic/vite.config.ts",
+    "example:optimistic:build": "vite build --config examples/optimistic/vite.config.ts",
+    "example:optimistic:e2e": "vite build --config examples/optimistic/vite.config.ts && vitest run --config examples/optimistic/vite.e2e.config.ts",
     "release:check": "vp check && vp test run && vp pack",
     "release": "bumpp --execute \"npm run release:check\""
   },

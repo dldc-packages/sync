@@ -77,5 +77,6 @@ function render(state: TodoState): void {
 
 client.ready().then(() => {
   (window as any).__syncReady = true;
+  (window as any).__client = client;
   render(decodeDatabase(client.getDatabase()));
 });

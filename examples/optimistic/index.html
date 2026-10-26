@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@dldc/sync — Optimistic updates on the main thread</title>
+    <link rel="stylesheet" href="/client/style.css" />
+  </head>
+  <body>
+    <h1>Optimistic updates <span class="muted">— main thread + dispatchAsync</span></h1>
+
+    <!-- Global sync status: "local" (dispatchAsync resolved), "server" (no pending) -->
+    <div id="sync-badge" data-synced="false">
+      <span id="applied-count">Applied locally: 0/0</span>
+      <span class="sep">·</span>
+      <span id="server-status">Server: syncing…</span>
+    </div>
+
+    <form id="task-form">
+      <input id="task-input" type="text" placeholder="Add a task…" autocomplete="off" />
+      <button type="submit">Add</button>
+    </form>
+
+    <ul id="task-list"></ul>
+
+    <p class="muted hint">
+      Only the toggle is optimistic here: <code>ToggleTask</code> runs a deliberately slow reducer,
+      so the checkbox flips <strong>instantly</strong> from a cheap main-thread patch while the
+      worker is still applying it — then <code>dispatchAsync()</code> reports <em>applied</em> and
+      the sync loop <em>synced</em>. Add and delete flow through at the slow worker's pace, as
+      expected.
+    </p>
+
+    <h2>Action feed <span class="muted">(this tab)</span></h2>
+    <table id="feed">
+      <thead>
+        <tr>
+          <th>action</th>
+          <th>dispatch</th>
+          <th>applied</th>
+          <th>server</th>
+        </tr>
+      </thead>
+      <tbody id="feed-body"></tbody>
+    </table>
+
+    <script type="module" src="/client/main.ts"></script>
+  </body>
+</html>

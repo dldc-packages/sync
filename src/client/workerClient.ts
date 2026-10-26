@@ -7,12 +7,27 @@ import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 export interface WorkerClient<Action, Context> {
   ready(): Promise<void>;
   subscribeDatabase(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
+  /**
+   * Fires with the id of a dispatch at the exact moment its commit snapshot
+   * (the one that contains the action) is ready but not yet delivered.
+   *
+   * Ordering: by the time this callback runs, `getDatabase()` already returns
+   * the commit snapshot, and the callback runs synchronously BEFORE that
+   * snapshot reaches `subscribeDatabase` subscribers. So an app with a
+   * main-thread optimistic layer can drop its overlay for that action here and
+   * the next render reconciles to the authoritative snapshot — no re-apply, no
+   * flicker.
+   *
+   * The id is the one passed to `dispatchAsync(action, id)`.
+   */
+  subscribeDispatched(callback: TSubscriptionCallback<number>): TUnsubscribe;
   subscribeDebugState(callback: TSubscriptionCallback<TDebugState>): TUnsubscribe;
   getDatabase(): Uint8Array;
   getDatabaseVersion(): number;
   getContext(): Context;
   getDebugState(): TDebugState;
   dispatch(action: Action): void;
+  dispatchAsync(action: Action, id?: number): Promise<void>;
   clearError(id: string): void;
   clearAllErrors(): void;
   refresh(): void;
@@ -39,10 +54,16 @@ export function createWorkerClient<Action, Context>({
   restoreContext,
 }: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
   const databaseSubscriptions = createSubscription<Uint8Array>();
+  const dispatchedSubscriptions = createSubscription<number>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
 
   let state: TWorkerInternalState<Context> | null = null;
   let isReady: TDeferred<void> | null = createDeferred<void>();
+  let dispatchSeq = 0;
+  const pendingDispatches = new Map<
+    number,
+    { resolve: () => void; reject: (reason: unknown) => void }
+  >();
 
   worker.onmessage = (event: MessageEvent) => {
     const message = event.data;
@@ -54,6 +75,7 @@ export function createWorkerClient<Action, Context>({
 
   return {
     subscribeDatabase: databaseSubscriptions.subscribe,
+    subscribeDispatched: dispatchedSubscriptions.subscribe,
     subscribeDebugState: debugStateSubscriptions.subscribe,
     ready,
     getDatabase,
@@ -61,6 +83,7 @@ export function createWorkerClient<Action, Context>({
     getContext,
     getDebugState,
     dispatch,
+    dispatchAsync,
     clearError,
     clearAllErrors,
     refresh,
@@ -104,6 +127,7 @@ export function createWorkerClient<Action, Context>({
   }
 
   function stop(): void {
+    rejectAllPendingDispatches(new Error("Worker stopped"));
     sendMessage({ kind: "Terminate" });
   }
 
@@ -112,6 +136,50 @@ export function createWorkerClient<Action, Context>({
       kind: "Dispatch",
       action: { _action: sanitizeAction(action) },
     });
+  }
+
+  /**
+   * Like `dispatch`, but returns a promise that resolves once the worker has
+   * applied the action to the local (optimistic) state — i.e. the same
+   * snapshot that `subscribeDatabase` delivers.
+   *
+   * Ordering guarantee: when the promise resolves, the action is present in
+   * `getDatabase()` and a `subscribeDatabase` event that includes it has
+   * already been delivered. The worker posts the `Database` message before the
+   * `Dispatched` ack, and worker→main messages are FIFO. A concurrent server
+   * patch may slip a snapshot in between — those snapshots never remove the
+   * action, so they don't break the guarantee.
+   *
+   * The promise rejects if the worker fails to apply the action (or shuts
+   * down before applying it).
+   *
+   * Pass the optional `id` to correlate the dispatch with
+   * `subscribeDispatched`: when the commit snapshot is about to be delivered,
+   * every `subscribeDispatched` subscriber is called with that same id —
+   * synchronously and with `getDatabase()` already pointing at the commit
+   * snapshot, but BEFORE the snapshot reaches database subscribers. That lets
+   * a main-thread optimistic layer drop its overlay for this action atomically
+   * (no re-apply / flicker). Ids must be unique across in-flight dispatches.
+   */
+  function dispatchAsync(action: Action, id?: number): Promise<void> {
+    if (isReady !== null) {
+      return Promise.reject(new Error("Cannot dispatch before client.ready()"));
+    }
+    const dispatchId = id === undefined ? ++dispatchSeq : id;
+    return new Promise<void>((resolve, reject) => {
+      pendingDispatches.set(dispatchId, { resolve, reject });
+      sendMessage({
+        kind: "Dispatch",
+        id: dispatchId,
+        ack: true,
+        action: { _action: sanitizeAction(action) },
+      });
+    });
+  }
+
+  function rejectAllPendingDispatches(reason: unknown): void {
+    for (const { reject } of pendingDispatches.values()) reject(reason);
+    pendingDispatches.clear();
   }
 
   function clearError(id: string): void {
@@ -158,6 +226,17 @@ export function createWorkerClient<Action, Context>({
       }
       state.database = new Uint8Array(message.content);
       state.version++;
+      // If this snapshot is the commit of a dispatch, notify its subscribers
+      // now — with `state.database` already pointing at the commit snapshot,
+      // but BEFORE the snapshot is emitted to database subscribers. A
+      // main-thread optimistic layer drops its overlay for the action here, so
+      // the `subscribeDatabase` render right after does not re-apply an action
+      // the snapshot already contains. (Order matters: dispatched must fire
+      // before database — the other way around would render the double-apply
+      // before the overlay is dropped.)
+      if (message.dispatchedId !== undefined) {
+        dispatchedSubscriptions.emit(message.dispatchedId);
+      }
       databaseSubscriptions.emit(state.database);
       return;
     }
@@ -172,11 +251,25 @@ export function createWorkerClient<Action, Context>({
       debugStateSubscriptions.emit(state.debugState);
       return;
     }
+    if (message.kind === "Dispatched") {
+      const pending = pendingDispatches.get(message.id);
+      if (!pending) {
+        return;
+      }
+      pendingDispatches.delete(message.id);
+      if (message.ok) {
+        pending.resolve();
+      } else {
+        pending.reject(new Error("Dispatch failed to apply"));
+      }
+      return;
+    }
     if (message.kind === "Reload") {
       globalThis.location.reload();
       return;
     }
     if (message.kind === "SessionExpired") {
+      rejectAllPendingDispatches(new Error("Session expired before dispatch was applied"));
       forceServerReload();
       return;
     }

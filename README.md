@@ -59,6 +59,17 @@ pnpm example:todo:client
 # open http://localhost:5173 (open in two tabs to see live sync)
 ```
 
+To see the client's `dispatchAsync` + `subscribeDispatched` in action —
+optimistic updates driven from the main thread *ahead of a slow worker*, with
+per-action `applied`/`synced` status and a timing feed — try the
+[optimistic example](./examples/optimistic/):
+
+```sh
+pnpm example:optimistic           # Node API server (port 3100)
+pnpm example:optimistic:client    # Vite dev server (port 5174)
+# open http://localhost:5174
+```
+
 Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`.
 
 ### Server
@@ -157,6 +168,20 @@ const client = createWorkerClient<Action, Context>({
 
 client.subscribeDatabase((bytes) => render(decode(bytes))); // re-render on changes
 client.dispatch({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }); // optimistic
+
+// Awaitable variant: resolves once the action is applied to the local
+// (optimistic) state — the same snapshot subscribeDatabase delivers. When it
+// resolves, getDatabase() already contains the action and a subscribeDatabase
+// event carrying it was already delivered (see dispatchAsync in the client).
+await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" });
+
+// Main-thread optimistic layers: pass an id to dispatchAsync and subscribe to
+// it. subscribeDispatched(id) fires synchronously BEFORE the snapshot that
+// commits that action reaches subscribeDatabase, so you can drop your overlay
+// for it atomically — and never re-apply an action the snapshot already
+// contains (no flicker, even with a slow reducer). See the optimistic example.
+client.subscribeDispatched((id) => dropOverlay(id));
+await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }, 1);
 ```
 
 ## Features

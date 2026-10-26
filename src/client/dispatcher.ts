@@ -4,7 +4,7 @@ import type { Sender } from "./sender.ts";
 import type { Store } from "./store.ts";
 
 export interface Dispatcher {
-  dispatch(action: SanitizedAction): Promise<void>;
+  dispatch(action: SanitizedAction, dispatchId?: number): Promise<boolean>;
   refresh(): Promise<void>;
 }
 
@@ -32,20 +32,22 @@ export function createDispatcher<Action>({
     refresh,
   };
 
-  function dispatch(action: SanitizedAction): Promise<void> {
+  function dispatch(action: SanitizedAction, dispatchId?: number): Promise<boolean> {
     return dispatchQueue.run(async () => {
       try {
         // Inside the lock: read state, generate TS, add to pending,
         // check if DB changed (another tab), save state, return results.
         const result = await opfsClient.dispatchInLock(action, store.getServerVersion());
-        store.applyDispatchResult(result);
+        store.applyDispatchResult(result, dispatchId);
         // Wake the sender to send the new action
         sender.wake();
         // Notify other tabs so they can refresh their in-memory state
         onDispatched();
+        return true;
       } catch (err) {
         console.error(err);
         onDispatchError(err);
+        return false;
       }
     });
   }

@@ -9,7 +9,7 @@ export interface Store<Action> {
     patch: Uint8Array | null,
     clientLastApplied: string | null,
   ): Promise<void>;
-  applyDispatchResult(result: DispatchResult): void;
+  applyDispatchResult(result: DispatchResult, dispatchId?: number): void;
   refreshFromOpfs(): Promise<void>;
   getServerContent(): Uint8Array;
   getLocalContent(): Uint8Array;
@@ -24,7 +24,7 @@ export interface StoreParams<Action, Context> {
   opfsClient: OpfsClient;
   restoreAction: TRestoreAction<Action>;
   reducer: TStoreReducer<Action, Context>;
-  onDatabase: (content: Uint8Array) => void;
+  onDatabase: (content: Uint8Array, dispatchId?: number) => void;
   onStateChange: (pendingCount: number) => void;
 }
 
@@ -72,8 +72,8 @@ export function createStore<Action, Context>({
     onStateChange(allPending.length);
   }
 
-  function applyDispatchResult(result: DispatchResult) {
-    applyStateChange(result.serverContent, result.serverVersion, result.pending);
+  function applyDispatchResult(result: DispatchResult, dispatchId?: number) {
+    applyStateChange(result.serverContent, result.serverVersion, result.pending, dispatchId);
   }
 
   async function refreshFromOpfs() {
@@ -94,6 +94,7 @@ export function createStore<Action, Context>({
     newServerContent: Uint8Array | null,
     newServerVersion: string,
     newPending: SanitizedPendingAction[],
+    dispatchId?: number,
   ) {
     if (newServerContent !== null) {
       serverContent = newServerContent;
@@ -107,14 +108,14 @@ export function createStore<Action, Context>({
         return; // nothing changed
       }
       localContent = rebase(localContent, appended);
-      onDatabase(localContent);
+      onDatabase(localContent, dispatchId);
       onStateChange(pendingsStore.getPendings().length);
       return;
     }
 
     // Fallback: full rebase of all pending on top of serverContent.
     localContent = rebase(serverContent, pendingsStore.getPendings());
-    onDatabase(localContent);
+    onDatabase(localContent, dispatchId);
     onStateChange(pendingsStore.getPendings().length);
   }
 
