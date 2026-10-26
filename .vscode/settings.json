@@ -1,8 +1,8 @@
 {
-  "deno.enable": false,
   "npm.autoDetect": "on",
+  "editor.defaultFormatter": "oxc.oxc-vscode",
   "[typescript]": {
-    "editor.defaultFormatter": null
+    "editor.defaultFormatter": "oxc.oxc-vscode"
   },
   "[typescriptreact]": {
     "editor.defaultFormatter": null
