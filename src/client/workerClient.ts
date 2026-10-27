@@ -1,10 +1,25 @@
 import { createSubscription, type TSubscriptionCallback, type TUnsubscribe } from "@dldc/pubsub";
 import { createDeferred, type TDeferred } from "../shared/deferred.ts";
 import type { TRestoreContext, TSanitizeAction } from "../shared/types.ts";
+import {
+  createMessageRouter,
+  type TMessageBus,
+  type TMessageRouter,
+  type TWorkerMessage,
+} from "./messageBus.ts";
 import type { TDebugState } from "./opfs.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
-export interface WorkerClient<Action, Context> {
+/** The main-thread sync client with no transport attached: it holds the
+ * mirrored database, the dispatch pipeline and the subscriptions, and talks to
+ * the worker through a `TMessageBus` — `emit` for worker→main messages,
+ * `onMessage` for main→worker ones. The bus is open (`kind` strings), so the
+ * app's own protocols could share the endpoint; in practice they live on the
+ * transport's router instead. */
+export interface TWorkerClientCore<Action, Context> extends TMessageBus<
+  TWorkerMessage,
+  TWorkerMessage
+> {
   ready(): Promise<void>;
   subscribeDatabase(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
   /**
@@ -35,6 +50,15 @@ export interface WorkerClient<Action, Context> {
   stop(): void;
 }
 
+/** The complete worker client: a core over which a transport has been layered.
+ * `send` posts any protocol's message to the worker, and `router` lets the app
+ * EXTEND the transport with its own kinds (the same single `worker.onmessage`
+ * listener routes everything). */
+export interface WorkerClient<Action, Context> extends TWorkerClientCore<Action, Context> {
+  send(message: TWorkerMessage): void;
+  router: TMessageRouter<TWorkerMessage>;
+}
+
 interface TWorkerInternalState<Context> {
   version: number;
   database: Uint8Array;
@@ -48,11 +72,15 @@ export interface TWorkerClientParams<Action, Context> {
   restoreContext: TRestoreContext<Context>;
 }
 
-export function createWorkerClient<Action, Context>({
-  worker,
+export interface TWorkerClientCoreParams<Action, Context> {
+  sanitizeAction: TSanitizeAction<Action>;
+  restoreContext: TRestoreContext<Context>;
+}
+
+export function createWorkerClientCore<Action, Context>({
   sanitizeAction,
   restoreContext,
-}: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
+}: TWorkerClientCoreParams<Action, Context>): TWorkerClientCore<Action, Context> {
   const databaseSubscriptions = createSubscription<Uint8Array>();
   const dispatchedSubscriptions = createSubscription<number>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
@@ -65,15 +93,20 @@ export function createWorkerClient<Action, Context>({
     { resolve: () => void; reject: (reason: unknown) => void }
   >();
 
-  worker.onmessage = (event: MessageEvent) => {
-    const message = event.data;
-    if (!message.kind) {
-      return;
-    }
-    handleOutMessage(message as TWorkerOutMessage);
-  };
+  /** Subscribers to the main→worker messages the client produces. A transport
+   * is exactly one such subscriber that posts them to the worker. */
+  const outgoing = new Set<(message: TWorkerMessage) => void>();
 
   return {
+    emit: (message: TWorkerMessage) => {
+      handleOutMessage(message as TWorkerOutMessage);
+    },
+    onMessage: (handler) => {
+      outgoing.add(handler);
+      return () => {
+        outgoing.delete(handler);
+      };
+    },
     subscribeDatabase: databaseSubscriptions.subscribe,
     subscribeDispatched: dispatchedSubscriptions.subscribe,
     subscribeDebugState: debugStateSubscriptions.subscribe,
@@ -90,6 +123,12 @@ export function createWorkerClient<Action, Context>({
     forceRefresh,
     stop,
   };
+
+  function sendMessage(message: TWorkerInMessage): void {
+    for (const handler of outgoing) {
+      handler(message);
+    }
+  }
 
   function getDatabaseVersion(): number {
     if (state === null) {
@@ -198,10 +237,6 @@ export function createWorkerClient<Action, Context>({
     sendMessage({ kind: "ForceRefresh" });
   }
 
-  function sendMessage(message: TWorkerInMessage): void {
-    worker.postMessage(message);
-  }
-
   function handleOutMessage(message: TWorkerOutMessage) {
     if (message.kind === "Ready") {
       if (isReady !== null) {
@@ -273,9 +308,51 @@ export function createWorkerClient<Action, Context>({
       forceServerReload();
       return;
     }
-
-    message satisfies never;
   }
+}
+
+/** Lay the worker transport onto a core: connect `worker.onmessage` to the
+ * core (`emit`), the core's outgoing messages to `worker.postMessage`, and
+ * hand out the router + `send` so app protocol kinds ride the same single
+ * listener. */
+export function createWorkerClientTransport<Action, Context>(
+  core: TWorkerClientCore<Action, Context>,
+  worker: Worker,
+): WorkerClient<Action, Context> {
+  const router = createMessageRouter<TWorkerMessage>();
+
+  router.on(
+    ["Ready", "Database", "Dispatched", "DebugState", "Reload", "SessionExpired"],
+    (message) => {
+      core.emit(message);
+    },
+  );
+
+  worker.onmessage = (event: MessageEvent) => {
+    router.handle(event.data);
+  };
+
+  const send = (message: TWorkerMessage): void => {
+    worker.postMessage(message);
+  };
+
+  core.onMessage((message) => {
+    send(message);
+  });
+
+  return { ...core, send, router };
+}
+
+/** The complete worker client: a transport layered over a core. Equivalent to
+ * `createWorkerClientTransport(createWorkerClientCore({...}), worker)` — split
+ * out so apps can reuse the parts (see those two for the layering). */
+export function createWorkerClient<Action, Context>({
+  worker,
+  sanitizeAction,
+  restoreContext,
+}: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
+  const core = createWorkerClientCore<Action, Context>({ sanitizeAction, restoreContext });
+  return createWorkerClientTransport(core, worker);
 }
 
 let forceReloading = false;

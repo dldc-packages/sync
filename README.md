@@ -184,7 +184,47 @@ client.subscribeDispatched((id) => dropOverlay(id));
 await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }, 1);
 ```
 
+### Client layering: core + transport
+
+Both ends are split into a **core** (the sync logic, no `postMessage`) and a
+**transport** (the DOM wiring), and the public API is their composition:
+
+```ts
+createWorkerEngine  = (p) => createWorkerEngineTransport(createWorkerEngineCore(p))
+createWorkerClient  = (p) => createWorkerClientTransport(createWorkerClientCore(p), p.worker)
+```
+
+A core is a `TMessageBus`: `emit(msg)` feeds messages into the logic (decoded
+from the wire), `onMessage(handler)` exposes the messages it produces (to be
+posted). The transport connects that bus to the worker boundary and returns the
+engine/client plus two extras:
+
+- `send(msg, transfer?)` — post any message to the other side (the `Ready`/
+  `Database` database buffers are transferred automatically via
+  `getMessageTransferables`);
+- `router` — a `createMessageRouter()` that dispatches each incoming message by
+  its exact `kind`.
+
+Because the transport routes on `kind` strings, an app can extend it with its
+own message protocols instead of adding extra `message` listeners — one
+`onmessage` per side routes everything:
+
+```ts
+// worker.ts — own an `idx:` protocol on the same transport as sync
+const engine = createWorkerEngine(params);
+engine.router.on("idx:query", (m) => indexer.handle(m));
+engine.router.on("idx:reindex", (m) => indexer.reindex());
+engine.start();
+```
+
+The `handleMessage` returned by `createWorkerEngine` keeps the
+`self.onmessage = engine.handleMessage` pattern working; the `Terminate`
+message is transport-owned (the core aborts its loops, the host closes). Cores
+and transports are exported separately (`@dldc/sync/client`) for apps that want
+to re-implement the wire layer themselves.
+
 ## Features
+
 
 - **Real-time sync** via rsync delta patches over a live stream
 - **Optimistic UI** — clients apply the reducer locally before the server
