@@ -1,4 +1,5 @@
 export { assertOk, UnauthorizedError } from "./client/errors.ts";
+export type { SanitizedAction, SanitizedContext, StoredError } from "./client/opfs.ts";
 export type { TWorkerInMessage, TWorkerOutMessage } from "./client/types.ts";
 export { createWorkerClient, forceServerReload, type WorkerClient } from "./client/workerClient.ts";
 export {
