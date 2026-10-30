@@ -24,5 +24,4 @@ export {
   createWorkerEngine,
   type TWorkerEngine,
   type TWorkerEngineParams,
-  type TWorkerMessageHandler,
 } from "./workerEngine.ts";

@@ -13,6 +13,8 @@ declare const self: DedicatedWorkerGlobalScope;
  * The main thread only talks to it via postMessage (through `createWorkerClient`).
  */
 const workerEngine = createWorkerEngine<Action, Context>({
+  emit: (message, transfer) => self.postMessage(message, transfer),
+  close: () => self.close(),
   getReducer: () => Promise.resolve(reducer),
   // No auth in this example, so the context is always the empty object.
   getContext: () => Promise.resolve({}),
@@ -31,5 +33,7 @@ const workerEngine = createWorkerEngine<Action, Context>({
   getContextTimeoutMs: 3_000,
 });
 
-self.onmessage = workerEngine.handleMessage;
+// Wire the engine to the worker global's message event. The engine owns no
+// listener itself, so your own protocol can share this worker (see README).
+self.addEventListener("message", (event) => workerEngine.receive(event.data));
 workerEngine.start();

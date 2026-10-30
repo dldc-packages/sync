@@ -136,6 +136,10 @@ wrapper:
 // worker.ts
 import { createWorkerEngine } from "@dldc/sync/client";
 const engine = createWorkerEngine<Action, Context>({
+  // wire the transport yourself: forward `transfer` — the engine hands you the
+  // database buffers of `Ready`/`Database` messages so they're transferred, not cloned.
+  emit: (message, transfer) => self.postMessage(message, transfer),
+  close: () => self.close(),
   getReducer: async () => reducer,
   getContext: async () => ({}),
   syncPath: (id) => `/api/client/${id}/sync`,
@@ -151,20 +155,25 @@ const engine = createWorkerEngine<Action, Context>({
   maxStoredErrors: 20,
   getContextTimeoutMs: 3000,
 });
-self.onmessage = engine.handleMessage;
+// The engine owns no `message` listener — the app wires it, so its own
+// protocol can share the same worker (see below).
+self.addEventListener("message", (event) => engine.receive(event.data));
 engine.start();
 ```
 
 ```ts
 // main.ts
 import { createWorkerClient } from "@dldc/sync/client";
+const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+  type: "module",
+});
 const client = createWorkerClient<Action, Context>({
-  worker: new Worker(new URL("./worker.ts", import.meta.url), {
-    type: "module",
-  }),
+  // wire the transport yourself
+  emit: (message) => worker.postMessage(message),
   sanitizeAction,
   restoreContext,
 });
+worker.addEventListener("message", (event) => client.receive(event.data));
 
 client.subscribeDatabase((bytes) => render(decode(bytes))); // re-render on changes
 client.dispatch({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }); // optimistic
@@ -182,6 +191,28 @@ await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi
 // contains (no flicker, even with a slow reducer). See the optimistic example.
 client.subscribeDispatched((id) => dropOverlay(id));
 await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }, 1);
+```
+
+#### Run your own protocol on the same worker
+
+The client and engine never own the `message` listener — you wire `receive` and
+`emit` yourself, and anything that is not a sync message is ignored. So the same
+worker (and the same `message` event) can carry your own `{ kind }` protocol
+next to sync: add your own listener and post your own messages. Use a
+namespaced `kind` (e.g. `"myapp:count"`) so the two sides never collide.
+
+```ts
+// worker.ts — handle your own kind, respond over the same channel
+self.addEventListener("message", (event) => {
+  if (event.data?.kind !== "myapp:count") return;
+  self.postMessage({ kind: "myapp:count-result", value: compute() });
+});
+
+// main.ts — send and receive your own kind, alongside the sync client
+worker.postMessage({ kind: "myapp:count" });
+worker.addEventListener("message", (event) => {
+  if (event.data?.kind === "myapp:count-result") render(event.data.value);
+});
 ```
 
 ## Features

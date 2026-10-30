@@ -4,5 +4,4 @@ export {
   createWorkerEngine,
   type TWorkerEngine,
   type TWorkerEngineParams,
-  type TWorkerMessageHandler,
 } from "./client/workerEngine.ts";

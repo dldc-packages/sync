@@ -33,6 +33,14 @@ export interface WorkerClient<Action, Context> {
   refresh(): void;
   forceRefresh(): void;
   stop(): void;
+  /**
+   * Feed a worker→main message into the client. The host wires this to the
+   * worker's `message` event (e.g. `worker.addEventListener("message", (e) =>
+   * client.receive(e.data))`) — the client owns no listener itself, so your own
+   * protocol can share the same worker. Messages without a `kind` string are
+   * ignored.
+   */
+  receive(message: TWorkerOutMessage): void;
 }
 
 interface TWorkerInternalState<Context> {
@@ -43,13 +51,18 @@ interface TWorkerInternalState<Context> {
 }
 
 export interface TWorkerClientParams<Action, Context> {
-  worker: Worker;
+  /**
+   * Post a main→worker message. The host wires this to the worker's
+   * `postMessage` (e.g. `emit: (message) => worker.postMessage(message)`) — the
+   * client never touches the `Worker` API itself.
+   */
+  emit: (message: TWorkerInMessage) => void;
   sanitizeAction: TSanitizeAction<Action>;
   restoreContext: TRestoreContext<Context>;
 }
 
 export function createWorkerClient<Action, Context>({
-  worker,
+  emit,
   sanitizeAction,
   restoreContext,
 }: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
@@ -64,14 +77,6 @@ export function createWorkerClient<Action, Context>({
     number,
     { resolve: () => void; reject: (reason: unknown) => void }
   >();
-
-  worker.onmessage = (event: MessageEvent) => {
-    const message = event.data;
-    if (!message.kind) {
-      return;
-    }
-    handleOutMessage(message as TWorkerOutMessage);
-  };
 
   return {
     subscribeDatabase: databaseSubscriptions.subscribe,
@@ -89,6 +94,7 @@ export function createWorkerClient<Action, Context>({
     refresh,
     forceRefresh,
     stop,
+    receive,
   };
 
   function getDatabaseVersion(): number {
@@ -199,7 +205,23 @@ export function createWorkerClient<Action, Context>({
   }
 
   function sendMessage(message: TWorkerInMessage): void {
-    worker.postMessage(message);
+    emit(message);
+  }
+
+  /**
+   * Feed a worker→main message into the client (see `WorkerClient.receive`).
+   * Anything that is not a sync message — e.g. your own protocol sharing the
+   * same worker — is ignored.
+   */
+  function receive(message: TWorkerOutMessage): void {
+    // The host may hand this any `event.data` (even non-objects) when the app
+    // shares the worker with its own protocol, so guard loosely at runtime.
+    const candidate = message as unknown;
+    const kind = (candidate as { kind?: unknown } | null)?.kind;
+    if (typeof kind !== "string") {
+      return;
+    }
+    handleOutMessage(message);
   }
 
   function handleOutMessage(message: TWorkerOutMessage) {
@@ -273,8 +295,8 @@ export function createWorkerClient<Action, Context>({
       forceServerReload();
       return;
     }
-
-    message satisfies never;
+    // Unknown kinds are ignored. This keeps the protocol open: an app sharing
+    // this worker posts its own `{ kind }` messages through the same channel.
   }
 }
 

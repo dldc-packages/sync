@@ -14,14 +14,35 @@ import { createStore } from "./store.ts";
 import { createSyncer } from "./syncer.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
-export type TWorkerMessageHandler = (message: MessageEvent) => void;
-
 export interface TWorkerEngine {
-  handleMessage: TWorkerMessageHandler;
+  /**
+   * Feed a main→worker message into the engine. The host wires this to the
+   * worker global's `message` event (e.g. `self.addEventListener("message",
+   * (e) => engine.receive(e.data))`) — the engine owns no listener itself, so
+   * your own protocol can share the same worker. Messages without a `kind`
+   * string are ignored.
+   */
+  receive(message: TWorkerInMessage): void;
   start(): void;
 }
 
 export interface TWorkerEngineParams<Action, Context> {
+  /**
+   * Post a worker→main message. The host wires this to `self.postMessage` and
+   * MUST forward `transfer`: the engine computes the transfer list (always a
+   * real array, empty when nothing is transferable) so the `Ready`/`Database`
+   * database buffers are transferred — not cloned — to the main thread. The
+   * parameter is non-optional precisely so this forward can't be dropped by
+   * accident (e.g. `emit: (message, transfer) => self.postMessage(message,
+   * transfer)`).
+   */
+  emit: (message: TWorkerOutMessage, transfer: Transferable[]) => void;
+  /**
+   * Close the worker scope (e.g. `() => self.close()`). Called when the main
+   * thread sends `Terminate`. The engine itself never touches the worker
+   * global.
+   */
+  close: () => void;
   crossTabDispatchChannelName: string;
   dbFileName: string;
   dispatchPath: (clientId: string) => string;
@@ -46,6 +67,8 @@ export interface TWorkerEngineParams<Action, Context> {
 }
 
 export function createWorkerEngine<Action, Context>({
+  emit,
+  close,
   crossTabDispatchChannelName,
   dbFileName,
   dispatchPath,
@@ -69,18 +92,19 @@ export function createWorkerEngine<Action, Context>({
   let debugState: TDebugState = { pendingCount: 0, errors: [] };
   let sessionExpired = false;
 
-  let handleMessage = (message: TWorkerInMessage) => {
+  // Incoming (main→worker) messages. Before `main()` has built the store,
+  // syncer, sender and dispatcher, the engine can only react to Terminate; the
+  // full message handling below replaces (`receiveMessage`) this closure then.
+  let receiveMessage = (message: TWorkerInMessage) => {
     if (message.kind === "Terminate") {
       syncController.abort();
-      self.close();
+      close();
       return;
     }
   };
 
   return {
-    handleMessage(event: MessageEvent) {
-      handleMessage(event.data as TWorkerInMessage);
-    },
+    receive,
     start,
   };
 
@@ -91,8 +115,23 @@ export function createWorkerEngine<Action, Context>({
     });
   }
 
+  /**
+   * Feed a main→worker message into the engine (see `TWorkerEngine.receive`).
+   * Anything that is not a sync message is left for the app's own handlers.
+   */
+  function receive(message: TWorkerInMessage): void {
+    // The host may hand this any `event.data` (even non-objects) when the app
+    // shares the worker global with its own protocol, so guard loosely.
+    const candidate = message as unknown;
+    const kind = (candidate as { kind?: unknown } | null)?.kind;
+    if (typeof kind !== "string") {
+      return;
+    }
+    receiveMessage(message);
+  }
+
   function sendMessage(message: TWorkerOutMessage): void {
-    self.postMessage(message, getTransferable(message));
+    emit(message, getTransferable(message));
   }
 
   function getTransferable(message: TWorkerOutMessage): Transferable[] {
@@ -253,11 +292,11 @@ export function createWorkerEngine<Action, Context>({
       dispatcher.refresh();
     };
 
-    handleMessage = (message: TWorkerInMessage) => {
+    receiveMessage = (message: TWorkerInMessage) => {
       if (message.kind === "Terminate") {
         broadcastChannel.close();
         syncController.abort();
-        self.close();
+        close();
         return;
       }
       if (message.kind === "Dispatch") {
@@ -296,7 +335,9 @@ export function createWorkerEngine<Action, Context>({
         });
         return;
       }
-      message satisfies never;
+      // Unknown kinds are ignored. This keeps the protocol open: an app sharing
+      // this worker handles its own `{ kind }` messages in its own event
+      // listeners.
     };
 
     // Emit the initial content to the in-process hook (the store's onDatabase

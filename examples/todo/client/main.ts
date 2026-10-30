@@ -6,10 +6,12 @@ const worker = new Worker(new URL("./worker.ts", import.meta.url), {
 });
 
 const client = createWorkerClient<Action, Context>({
-  worker,
+  emit: (message) => worker.postMessage(message),
   sanitizeAction: (action) => action,
   restoreContext: (data) => data as Context,
 });
+
+worker.addEventListener("message", (event) => client.receive(event.data));
 
 /** Decode the current JSON file bytes into a TodoState. An empty file (fresh) means an empty list. */
 function decodeDatabase(bytes: Uint8Array): TodoState {

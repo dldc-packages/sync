@@ -35,13 +35,17 @@ import { applyOptimisticToggle } from "./optimistic.ts";
  *   synced   → the server has acked it (no pending actions left)
  */
 
+const worker = new Worker(new URL("./worker.ts", import.meta.url), {
+  type: "module",
+});
+
 const client = createWorkerClient<Action, Context>({
-  worker: new Worker(new URL("./worker.ts", import.meta.url), {
-    type: "module",
-  }),
+  emit: (message) => worker.postMessage(message),
   sanitizeAction: (action) => action,
   restoreContext: (data) => data as Context,
 });
+
+worker.addEventListener("message", (event) => client.receive(event.data));
 
 // Expose the client to E2E tests.
 (window as any).__client = client;
