@@ -6,10 +6,10 @@ import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export interface WorkerClient<Action, Context> {
   ready(): Promise<void>;
-  subscribeDatabase(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
+  subscribeState(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
   /**
    * Fires with the derived value (index/cache) for the same snapshot that
-   * `subscribeDatabase` delivers, immediately before it. One event per
+   * `subscribeState` delivers, immediately before it. One event per
    * snapshot. When the engine runs with `emitDerived: false`, only the initial
    * (Ready) derived is delivered — later snapshots don't fire it.
    */
@@ -18,9 +18,9 @@ export interface WorkerClient<Action, Context> {
    * Fires with the id of a dispatch at the exact moment its commit snapshot
    * (the one that contains the action) is ready but not yet delivered.
    *
-   * Ordering: by the time this callback runs, `getDatabase()` already returns
+   * Ordering: by the time this callback runs, `getState()` already returns
    * the commit snapshot, and the callback runs synchronously BEFORE that
-   * snapshot reaches `subscribeDatabase` subscribers. So an app with a
+   * snapshot reaches `subscribeState` subscribers. So an app with a
    * main-thread optimistic layer can drop its overlay for that action here and
    * the next render reconciles to the authoritative snapshot — no re-apply, no
    * flicker.
@@ -29,8 +29,8 @@ export interface WorkerClient<Action, Context> {
    */
   subscribeDispatched(callback: TSubscriptionCallback<number>): TUnsubscribe;
   subscribeDebugState(callback: TSubscriptionCallback<TDebugState>): TUnsubscribe;
-  getDatabase(): Uint8Array;
-  getDatabaseVersion(): number;
+  getState(): Uint8Array;
+  getStateVersion(): number;
   getDerived(): Uint8Array;
   getContext(): Context;
   getDebugState(): TDebugState;
@@ -47,7 +47,7 @@ export interface WorkerClient<Action, Context> {
    *
    * Use it after a `derive` schema/format change or when the persisted derived
    * has drifted on the worker side. Fire-and-forget like `refresh`: when the
-   * recomputed value is ready, a new database + derived snapshot is delivered,
+   * recomputed value is ready, a new state + derived snapshot is delivered,
    * so `subscribeDerived` fires and `getDerived()` returns the fresh value.
    */
   forceRecomputeDerived(): void;
@@ -64,7 +64,7 @@ export interface WorkerClient<Action, Context> {
 
 interface TWorkerInternalState<Context> {
   version: number;
-  database: Uint8Array;
+  content: Uint8Array;
   /** The derived value for the latest delivered snapshot (never null). */
   derived: Uint8Array;
   context: Context;
@@ -87,7 +87,7 @@ export function createWorkerClient<Action, Context>({
   sanitizeAction,
   restoreContext,
 }: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
-  const databaseSubscriptions = createSubscription<Uint8Array>();
+  const stateSubscriptions = createSubscription<Uint8Array>();
   const derivedSubscriptions = createSubscription<Uint8Array>();
   const dispatchedSubscriptions = createSubscription<number>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
@@ -101,13 +101,13 @@ export function createWorkerClient<Action, Context>({
   >();
 
   return {
-    subscribeDatabase: databaseSubscriptions.subscribe,
+    subscribeState: stateSubscriptions.subscribe,
     subscribeDerived: derivedSubscriptions.subscribe,
     subscribeDispatched: dispatchedSubscriptions.subscribe,
     subscribeDebugState: debugStateSubscriptions.subscribe,
     ready,
-    getDatabase,
-    getDatabaseVersion,
+    getState,
+    getStateVersion,
     getDerived,
     getContext,
     getDebugState,
@@ -122,7 +122,7 @@ export function createWorkerClient<Action, Context>({
     receive,
   };
 
-  function getDatabaseVersion(): number {
+  function getStateVersion(): number {
     if (state === null) {
       throw new Error("Worker not ready");
     }
@@ -136,11 +136,11 @@ export function createWorkerClient<Action, Context>({
     return isReady.promise;
   }
 
-  function getDatabase(): Uint8Array {
+  function getState(): Uint8Array {
     if (state === null) {
       throw new Error("Worker not ready");
     }
-    return state.database;
+    return state.content;
   }
 
   function getDerived(): Uint8Array {
@@ -179,11 +179,11 @@ export function createWorkerClient<Action, Context>({
   /**
    * Like `dispatch`, but returns a promise that resolves once the worker has
    * applied the action to the local (optimistic) state — i.e. the same
-   * snapshot that `subscribeDatabase` delivers.
+   * snapshot that `subscribeState` delivers.
    *
    * Ordering guarantee: when the promise resolves, the action is present in
-   * `getDatabase()` and a `subscribeDatabase` event that includes it has
-   * already been delivered. The worker posts the `Database` message before the
+   * `getState()` and a `subscribeState` event that includes it has
+   * already been delivered. The worker posts the `State` message before the
    * `Dispatched` ack, and worker→main messages are FIFO. A concurrent server
    * patch may slip a snapshot in between — those snapshots never remove the
    * action, so they don't break the guarantee.
@@ -194,8 +194,8 @@ export function createWorkerClient<Action, Context>({
    * Pass the optional `id` to correlate the dispatch with
    * `subscribeDispatched`: when the commit snapshot is about to be delivered,
    * every `subscribeDispatched` subscriber is called with that same id —
-   * synchronously and with `getDatabase()` already pointing at the commit
-   * snapshot, but BEFORE the snapshot reaches database subscribers. That lets
+   * synchronously and with `getState()` already pointing at the commit
+   * snapshot, but BEFORE the snapshot reaches state subscribers. That lets
    * a main-thread optimistic layer drop its overlay for this action atomically
    * (no re-apply / flicker). Ids must be unique across in-flight dispatches.
    */
@@ -271,44 +271,44 @@ export function createWorkerClient<Action, Context>({
       }
       state = {
         version: 1,
-        database: new Uint8Array(message.database),
+        content: new Uint8Array(message.state),
         derived: new Uint8Array(message.derived),
         context: restoreContext(message.context._context),
         debugState: { outboxCount: 0, errors: [] },
       };
       derivedSubscriptions.emit(state.derived);
-      databaseSubscriptions.emit(state.database);
+      stateSubscriptions.emit(state.content);
       return;
     }
-    if (message.kind === "Database") {
+    if (message.kind === "State") {
       if (state === null) {
         throw new Error("Worker not ready");
       }
-      state.database = new Uint8Array(message.content);
+      state.content = new Uint8Array(message.content);
       if (message.derived !== undefined) {
         state.derived = new Uint8Array(message.derived);
       }
       state.version++;
       // If this snapshot is the commit of a dispatch, notify its subscribers
-      // now — with `state.database` already pointing at the commit snapshot,
-      // but BEFORE the snapshot is emitted to database subscribers. A
+      // now — with `state.content` already pointing at the commit snapshot,
+      // but BEFORE the snapshot is emitted to state subscribers. A
       // main-thread optimistic layer drops its overlay for the action here, so
-      // the `subscribeDatabase` render right after does not re-apply an action
+      // the `subscribeState` render right after does not re-apply an action
       // the snapshot already contains. (Order matters: dispatched must fire
-      // before database — the other way around would render the double-apply
+      // before state — the other way around would render the double-apply
       // before the overlay is dropped.)
       if (message.dispatchedId !== undefined) {
         dispatchedSubscriptions.emit(message.dispatchedId);
       }
-      // Derived rides along with the same snapshot, just before the database
-      // so the database render is the final trigger. With `emitDerived: false`
+      // Derived rides along with the same snapshot, just before the state
+      // so the state render is the final trigger. With `emitDerived: false`
       // on the engine the snapshot carries no derived — then it simply isn't
       // re-emitted and the previous value stays (still non-null).
       if (message.derived !== undefined) {
         state.derived = new Uint8Array(message.derived);
         derivedSubscriptions.emit(state.derived);
       }
-      databaseSubscriptions.emit(state.database);
+      stateSubscriptions.emit(state.content);
       return;
     }
     if (message.kind === "DebugState") {

@@ -4,7 +4,7 @@ A task list that demonstrates **optimistic updates driven from the main thread
 *relative to* a slow worker**, built on `dispatchAsync(action, id)` + the
 `subscribeDispatched(id)` commit signal.
 
-The [todo example](../todo/) renders straight from `subscribeDatabase`
+The [todo example](../todo/) renders straight from `subscribeState`
 snapshots. Here `ToggleTask` runs a deliberately **slow** reducer (a busy-wait
 in `shared.ts`), so if the UI only rendered what the worker sends back, every
 toggle would lag behind the worker's whole pipeline: message-passing, dispatch
@@ -38,7 +38,7 @@ deltas (`dispatch` → `applied` → `server`).
 ```ts
 // main thread: an overlay keyed by the id passed to dispatchAsync,
 // rendered as a cheap `done` flip (see client/optimistic.ts)
-client.subscribeDatabase((bytes) => { workerState = decode(bytes); render(); });
+client.subscribeState((bytes) => { workerState = decode(bytes); render(); });
 
 // the commit signal: fires BEFORE the snapshot that contains the action is
 // delivered, so the overlay is dropped in time for the next render
@@ -71,12 +71,12 @@ the snapshot that contains your action, so "the next event has my action" is
 
 `dispatchAsync(action, id)` fixes that:
 
-- on resolve, `getDatabase()` already contains the action and a
-  `subscribeDatabase` event that includes it was already delivered (the worker
-  posts the `Database` snapshot before the ack, and worker→main messages are
+- on resolve, `getState()` already contains the action and a
+  `subscribeState` event that includes it was already delivered (the worker
+  posts the `State` snapshot before the ack, and worker→main messages are
   FIFO);
 - **and** just before that snapshot is delivered, `subscribeDispatched(id)`
-  fires with the same `id`, synchronously, ahead of the `subscribeDatabase`
+  fires with the same `id`, synchronously, ahead of the `subscribeState`
   render.
 
 That second piece is what makes the optimistic overlay safe. The worker's

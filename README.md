@@ -154,7 +154,7 @@ wrapper:
 import { createWorkerEngine } from "@dldc/sync/client";
 const engine = createWorkerEngine<Action, Context>({
   // wire the transport yourself: forward `transfer` — the engine hands you the
-  // database buffers of `Ready`/`Database` messages so they're transferred, not cloned.
+  // state buffers of `Ready`/`State` messages so they're transferred, not cloned.
   emit: (message, transfer) => self.postMessage(message, transfer),
   close: () => self.close(),
   getReducer: async () => reducer,
@@ -194,18 +194,18 @@ const client = createWorkerClient<Action, Context>({
 });
 worker.addEventListener("message", (event) => client.receive(event.data));
 
-client.subscribeDatabase((bytes) => render(decode(bytes))); // re-render on changes
+client.subscribeState((bytes) => render(decode(bytes))); // re-render on changes
 client.dispatch({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" }); // optimistic
 
 // Awaitable variant: resolves once the action is applied to the local
-// (optimistic) state — the same snapshot subscribeDatabase delivers. When it
-// resolves, getDatabase() already contains the action and a subscribeDatabase
+// (optimistic) state — the same snapshot subscribeState delivers. When it
+// resolves, getState() already contains the action and a subscribeState
 // event carrying it was already delivered (see dispatchAsync in the client).
 await client.dispatchAsync({ kind: "AddTodo", id: crypto.randomUUID(), text: "hi" });
 
 // Main-thread optimistic layers: pass an id to dispatchAsync and subscribe to
 // it. subscribeDispatched(id) fires synchronously BEFORE the snapshot that
-// commits that action reaches subscribeDatabase, so you can drop your overlay
+// commits that action reaches subscribeState, so you can drop your overlay
 // for it atomically — and never re-apply an action the snapshot already
 // contains (no flicker, even with a slow reducer). See the optimistic example.
 client.subscribeDispatched((id) => dropOverlay(id));
@@ -267,7 +267,7 @@ createStore({
 });
 ```
 
-On the main thread the derived rides along with every database snapshot:
+On the main thread the derived rides along with every state snapshot:
 
 ```ts
 client.subscribeDerived((bytes) => renderIndex(decodeDerived(bytes)));
@@ -280,7 +280,7 @@ to re-run `derive` with an empty previous value (ignoring the current one):
 
 ```ts
 client.forceRecomputeDerived(); // derive() re-runs from scratch, then a fresh
-                                // database + derived snapshot is delivered
+                                // state + derived snapshot is delivered
 ```
 
 `derive` normally receives the saved derived as a diff hint (`prevDerived`); forcing
@@ -288,9 +288,9 @@ passes an empty hint so an incremental `derive` must recompute entirely from the
 (like `client.forceRefresh()`, only it touches the derived alone — nothing is deleted
 and no reload happens). The rebuilt value is persisted next to the state, then the new
 live derived (with the outbox replayed on top) is delivered through the normal
-`subscribeDatabase` / `subscribeDerived` path.
+`subscribeState` / `subscribeDerived` path.
 
-By default the engine includes `derived` in every `Ready`/`Database` message. The
+By default the engine includes `derived` in every `Ready`/`State` message. The
 cost is one `slice()` copy per emission (~30 µs/MB — the `postMessage` transfer
 itself is O(1), zero-copy). For apps that only read the derived at startup (or
 keep a very large one), set `emitDerived: false` on the engine: the worker still

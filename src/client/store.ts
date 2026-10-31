@@ -33,7 +33,7 @@ export interface InitialLoad {
   serverVersion: string | null;
   errors: StoredError[];
   clientId: string;
-  database: Uint8Array;
+  state: Uint8Array;
   derived: Uint8Array;
 }
 
@@ -50,7 +50,7 @@ export interface Store {
   getState(): Uint8Array;
   getDerived(): Uint8Array;
 
-  // Transactions — each acquires the OPFS lock itself and keeps the db,
+  // Transactions — each acquires the OPFS lock itself and keeps the state,
   // derived and meta files consistent (same critical section).
   dispatch(action: SanitizedAction, dispatchId?: number): Promise<DispatchResult>;
   applyPatch(
@@ -101,7 +101,7 @@ export interface StoreParams<Action, Context> {
  * The store is the single owner of the OPFS lock. It composes the raw
  * `Storage` into consistent transactions: state, derived and bookkeeping are
  * updated together inside one `withLock` acquisition, so a racing tab's patch
- * can never land between the db and derived writes on disk.
+ * can never land between the state and derived writes on disk.
  */
 export function createStore<Action, Context>({
   context,
@@ -116,7 +116,7 @@ export function createStore<Action, Context>({
   reducer,
   derive,
   maxStoredErrors,
-  onState: onDatabase,
+  onState,
   onStateChange,
 }: StoreParams<Action, Context>): Store {
   let serverState: Uint8Array = initialState;
@@ -164,11 +164,11 @@ export function createStore<Action, Context>({
       // Append to the outbox
       meta.outbox.push({ ts: tsStr, action, sent: false });
 
-      // If another tab changed the db meanwhile, read it and persist the derived
+      // If another tab changed the state meanwhile, read it and persist the derived
       // for it in the same critical section as the meta write.
       let serverContent: Uint8Array | null = null;
       if (meta.serverVersion !== serverVersion) {
-        serverContent = await storage.readDb();
+        serverContent = await storage.readState();
         await persistDerived(serverContent);
       }
 
@@ -196,19 +196,19 @@ export function createStore<Action, Context>({
 
       // Version-based dedup: if another tab already handled this version, stop
       if (meta.serverVersion === version) {
-        const serverContent = await storage.readDb();
+        const serverContent = await storage.readState();
         await persistDerived(serverContent);
         return { serverContent, outbox: meta.outbox, serverVersion: version };
       }
 
-      // Apply the patch to the db file (or just read it for UpToDate).
+      // Apply the patch to the state file (or just read it for UpToDate).
       let serverContent: Uint8Array;
       if (patch !== null) {
-        const current = await storage.readDb();
+        const current = await storage.readState();
         serverContent = apply(current, patch);
-        await storage.writeDb(serverContent);
+        await storage.writeState(serverContent);
       } else {
-        serverContent = await storage.readDb();
+        serverContent = await storage.readState();
       }
 
       // Update meta: new server version, drop acked outbox actions (applies to
@@ -223,7 +223,7 @@ export function createStore<Action, Context>({
       await storage.writeMeta(meta);
 
       // Persist the derived for the new server content in the same critical
-      // section as the db write, so the pair on disk always belongs to the
+      // section as the state write, so the pair on disk always belongs to the
       // same content version.
       await persistDerived(serverContent);
 
@@ -236,7 +236,7 @@ export function createStore<Action, Context>({
   async function refreshFromOpfs(): Promise<void> {
     const result = await runInLock(async () => {
       const meta = await storage.readMeta();
-      const serverContent = meta.serverVersion !== serverVersion ? await storage.readDb() : null;
+      const serverContent = meta.serverVersion !== serverVersion ? await storage.readState() : null;
       if (serverContent !== null) {
         await persistDerived(serverContent);
       }
@@ -253,7 +253,7 @@ export function createStore<Action, Context>({
   /**
    * Compute the derived for `content` (incrementally from the current value),
    * persist it, and update the in-memory `serverDerived`. Must be called inside
-   * the OPFS lock, right next to the db write.
+   * the OPFS lock, right next to the state write.
    */
   async function persistDerived(content: Uint8Array): Promise<void> {
     serverDerived = derive(content, serverDerived);
@@ -351,7 +351,7 @@ export function createStore<Action, Context>({
   }
 
   /**
-   * Refresh: clear local errors and delete the db file, reset serverVersion
+   * Refresh: clear local errors and delete the state file, reset serverVersion
    * so the sync loop reconnects and fetches a fresh copy from the server.
    * Outbox actions are preserved.
    */
@@ -361,7 +361,7 @@ export function createStore<Action, Context>({
       meta.errors = [];
       meta.serverVersion = null;
       await storage.writeMeta(meta);
-      await storage.deleteDb();
+      await storage.deleteState();
       return {
         outboxCount: meta.outbox.length,
         errors: meta.errors,
@@ -371,7 +371,7 @@ export function createStore<Action, Context>({
 
   /**
    * Force refresh: clear everything — outbox actions, local errors, and the
-   * db file. Resets serverVersion so the sync loop reconnects fresh.
+   * state file. Resets serverVersion so the sync loop reconnects fresh.
    * Destructive — unsent actions and error history are lost.
    */
   function forceRefresh(): Promise<TDebugState> {
@@ -381,7 +381,7 @@ export function createStore<Action, Context>({
       meta.errors = [];
       meta.serverVersion = null;
       await storage.writeMeta(meta);
-      await storage.deleteDb();
+      await storage.deleteState();
       return {
         outboxCount: meta.outbox.length,
         errors: meta.errors,
@@ -399,15 +399,15 @@ export function createStore<Action, Context>({
    * when the persisted derived has drifted and no content change will
    * self-heal it.
    *
-   * Runs under the OPFS lock so the db + derived pair on disk stays consistent.
+   * Runs under the OPFS lock so the state + derived pair on disk stays consistent.
    * If another tab has advanced the committed content since our last refresh,
-   * that fresh db is derived from (and adopted) instead of our stale mirror.
+   * that fresh state is derived from (and adopted) instead of our stale mirror.
    */
   async function forceRecomputeDerived(): Promise<void> {
     const result = await runInLock(async () => {
       const meta = await storage.readMeta();
       const serverContent =
-        meta.serverVersion !== serverVersion ? await storage.readDb() : serverState;
+        meta.serverVersion !== serverVersion ? await storage.readState() : serverState;
       serverDerived = derive(serverContent, EMPTY_DERIVED);
       await storage.writeDerived(serverDerived);
       return {
@@ -430,7 +430,7 @@ export function createStore<Action, Context>({
    * is a prefix of the new one (only appends), apply just the newly-appended
    * actions on top of the current localContent instead of rebasing everything
    * from serverContent. If nothing changed at all (appended is empty), skip
-   * the database emission entirely.
+   * the state emission entirely.
    */
   function applyStateChange(
     newServerContent: Uint8Array | null,
@@ -464,7 +464,7 @@ export function createStore<Action, Context>({
   }
 
   function emit(dispatchId?: number) {
-    onDatabase(localState, localDerived, dispatchId);
+    onState(localState, localDerived, dispatchId);
     onStateChange(outboxStore.getOutbox().length);
   }
 
@@ -499,7 +499,7 @@ export function createStore<Action, Context>({
 
 /**
  * Boot-time read of the three OPFS files under the lock, returning a coherent
- * snapshot (meta + db + derived of the same content version). Runs before the
+ * snapshot (meta + state + derived of the same content version). Runs before the
  * store exists (the store is constructed from its result), so it lives here,
  * in the module that owns the lock.
  */
@@ -512,7 +512,7 @@ export async function loadInitial(storage: Storage, opfsLockName: string): Promi
       serverVersion: meta.serverVersion,
       errors: meta.errors,
       clientId: meta.clientId,
-      database: await storage.readDb(),
+      state: await storage.readState(),
       derived: await storage.readDerived(),
     };
   });

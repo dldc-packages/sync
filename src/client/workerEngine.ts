@@ -31,8 +31,8 @@ export interface TWorkerEngineParams<Action, Context> {
   /**
    * Post a worker→main message. The host wires this to `self.postMessage` and
    * MUST forward `transfer`: the engine computes the transfer list (always a
-   * real array, empty when nothing is transferable) so the `Ready`/`Database`
-   * database buffers are transferred — not cloned — to the main thread. The
+   * real array, empty when nothing is transferable) so the `Ready`/`State`
+   * state buffers are transferred — not cloned — to the main thread. The
    * parameter is non-optional precisely so this forward can't be dropped by
    * accident (e.g. `emit: (message, transfer) => self.postMessage(message,
    * transfer)`).
@@ -59,11 +59,11 @@ export interface TWorkerEngineParams<Action, Context> {
   maxStoredErrors: number;
   /** OPFS file holding the engine bookkeeping (clientId, hlc, outbox, …). */
   metaFileName: string;
-  /** Called in-process with every database content change (same content the
+  /** Called in-process with every state content change (same content the
    * main thread receives), once with the initial content on startup. Only
    * valid for the duration of the call — copy it if it must be retained
    * beyond the next emission. */
-  onDatabase?: (content: Uint8Array) => void;
+  onState?: (content: Uint8Array) => void;
   /** Called in-process with every derived change (same bytes the main thread
    * receives via `subscribeDerived`), once with the initial derived on
    * startup. Only valid for the duration of the call. */
@@ -81,7 +81,7 @@ export interface TWorkerEngineParams<Action, Context> {
   /**
    * Escape hatch for large derived values. Derived is always computed and the
    * in-process `onDerived` hook always fires. By default every `Ready`/
-   * `Database` message also carries the derived bytes to the main thread
+   * `State` message also carries the derived bytes to the main thread
    * (each emission costs a `slice()` copy; the transfer itself is O(1) —
    * zero-copy). Set `emitDerived: false` to skip that per-snapshot copy:
    * only the initial derived (in `Ready`) is delivered, later snapshots
@@ -103,7 +103,7 @@ export function createWorkerEngine<Action, Context>({
   getDerive,
   maxStoredErrors,
   metaFileName,
-  onDatabase,
+  onState,
   onDerived,
   opfsLockName,
   reconnectBaseDelay,
@@ -165,9 +165,9 @@ export function createWorkerEngine<Action, Context>({
 
   function getTransferable(message: TWorkerOutMessage): Transferable[] {
     if (message.kind === "Ready") {
-      return [message.database, ...(message.derived ? [message.derived] : [])];
+      return [message.state, ...(message.derived ? [message.derived] : [])];
     }
-    if (message.kind === "Database") {
+    if (message.kind === "State") {
       return [message.content, ...(message.derived ? [message.derived] : [])];
     }
     return [];
@@ -231,7 +231,7 @@ export function createWorkerEngine<Action, Context>({
     const {
       reducer,
       derive: loadedDerive,
-      database,
+      state,
       context: sanitizedContext,
       storage,
       clientId,
@@ -259,7 +259,7 @@ export function createWorkerEngine<Action, Context>({
       storage,
       opfsLockName,
       maxStoredErrors,
-      initialState: database,
+      initialState: state,
       initialOutbox: outbox,
       initialServerVersion: serverVersion,
       initialDerived,
@@ -268,10 +268,10 @@ export function createWorkerEngine<Action, Context>({
       onState: (content: Uint8Array, derivedContent: Uint8Array, dispatchedId?: number) => {
         // In-process hooks first; the message path slices before transferring,
         // so the hooks' references are never detached.
-        onDatabase?.(content);
+        onState?.(content);
         onDerived?.(derivedContent);
         sendMessage({
-          kind: "Database",
+          kind: "State",
           content: content.slice().buffer,
           ...(emitDerived ? { derived: derivedContent.slice().buffer } : {}),
           ...(dispatchedId === undefined ? {} : { dispatchedId }),
@@ -385,7 +385,7 @@ export function createWorkerEngine<Action, Context>({
     // Emit the initial content to the in-process hooks (the store's onState
     // only fires on later changes), mirroring the Ready message below.
     const readyDerived = store.getDerived();
-    onDatabase?.(store.getState());
+    onState?.(store.getState());
     onDerived?.(readyDerived);
 
     // Ready always carries the initial derived, so the main thread's
@@ -393,7 +393,7 @@ export function createWorkerEngine<Action, Context>({
     sendMessage({
       kind: "Ready",
       context: sanitizedContext,
-      database: store.getState().slice().buffer,
+      state: store.getState().slice().buffer,
       derived: readyDerived.slice().buffer,
     });
 

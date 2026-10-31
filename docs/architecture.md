@@ -41,7 +41,7 @@ Three kinds of data flow through the system:
 
 | Kind     | What it is                                        | Synced to server?           | Stored where                      |
 | -------- | ------------------------------------------------- | --------------------------- | --------------------------------- |
-| **State**| The file content — an opaque `ArrayBuffer` (JSON, a SQL db, …). | Yes — it *is* the synced file. | OPFS **db file** (server content). |
+| **State**| The file content — an opaque `ArrayBuffer` (JSON, a SQL db, …). | Yes — it *is* the synced file. | OPFS **state file** (server content). |
 | **Outbox**| The ordered list of actions this client produced but the server hasn't applied (and acknowledged) yet. | No — each entry is *sent* to the server until it's acked. | OPFS **meta file** (Bookkeeping JSON). |
 | **Derived**| A second value computed from the state, never synced (an index/cache/aggregate). | No. | OPFS **derived file** (server-content derived). |
 
@@ -80,7 +80,7 @@ and server alike), and the derived value is never null in the pipeline.
 Derived obeys exactly the same storage/rebuild rule as the state:
 
 - OPFS holds the derived **for the committed server content** (its own file,
-  written in the same critical section as the db file, keyed by `serverVersion`).
+  written in the same critical section as the state file, keyed by `serverVersion`).
 - The live derived is **rebuilt by rebasing the outbox on top of it**, in
   memory, in the worker.
 
@@ -115,9 +115,9 @@ Every read-modify-write of these files happens inside the store's
 `navigator.locks`, `src/client/lock.ts`), so concurrent tabs serialize instead
 of corrupt each other.
 
-The important invariant: **db file and derived file are always for the same
+The important invariant: **state file and derived file are always for the same
 `serverVersion`.** The store writes them in one critical section
-(`persistDerived` runs right after the db write, inside the same lock), so a
+(`persistDerived` runs right after the state write, inside the same lock), so a
 racing tab's patch can never land between the two writes. A stale derived file
 on disk is harmless: it is recomputed from the committed content on startup.
 
@@ -150,24 +150,24 @@ This is why the reducer must be derived-aware. For an empty outbox,
 
 ### Startup
 
-1. `init` creates the `Storage` and reads the db, derived and meta files
+1. `init` creates the `Storage` and reads the state, derived and meta files
    (`loadInitial`, `src/client/store.ts` — the store owns this lock too).
-2. `createStore` recomputes `serverDerived = derive(db, savedDerived)` — always
+2. `createStore` recomputes `serverDerived = derive(state, savedDerived)` — always
    recomputed; the saved file is just a hint/diff base.
-3. `initialLocal = rebase(db, outbox, serverDerived)`.
-4. The worker posts `Ready` (database + derived) to the main thread; derived
+3. `initialLocal = rebase(state, outbox, serverDerived)`.
+4. The worker posts `Ready` (state + derived) to the main thread; derived
    rides along so a fresh tab is immediately consistent.
 
 ### Dispatch (optimistic)
 
 1. Main thread posts `Dispatch(action)`.
 2. `dispatcher` → `store.dispatch`: under the lock, mint an HLC `ts`, append to
-   the outbox, persist; if another tab changed the db meanwhile, read it and
+   the outbox, persist; if another tab changed the state meanwhile, read it and
    compute + persist its derived in the same critical section.
 3. `store.dispatch` then commits in-memory: if the server content changed, full
    rebase; if only the outbox grew, rebase just the appended entries on top of
    the current `local*` (incremental path).
-4. Emit `Database` (+ derived) to the main thread → optimistic UI, wake the
+4. Emit `State` (+ derived) to the main thread → optimistic UI, wake the
    sender, and `BroadcastChannel("…")` tells other tabs to refresh.
 5. Other tabs' workers re-read OPFS (`store.refreshFromOpfs`) and rebase → all
    tabs show the same live content.
@@ -187,7 +187,7 @@ the server acknowledges them through the sync channel.
    - **Version dedup:** if `meta.serverVersion` already equals the incoming
      version, another tab handled this patch — just read the files (and
      re-derive), don't apply twice.
-   - Else apply the rsync patch to the db file, bump `serverVersion`, drop
+   - Else apply the rsync patch to the state file, bump `serverVersion`, drop
      acked outbox entries (everything with `ts ≤ clientLastApplied`), and write
      the derived for the new content in the same lock.
 3. Rebuild `local*` by rebasing the remaining outbox, and emit.
@@ -197,8 +197,8 @@ the server acknowledges them through the sync channel.
 `client.forceRecomputeDerived()` posts a `ForceRecomputeDerived` message → the store
 runs `derive` with an **empty** previous value (ignoring the persisted one), so an
 incremental `derive` rebuilds from the state instead of diffing. Under the lock it
-persists the fresh derived next to the db, then rebases the outbox on top and emits a
-new `Database` (+ derived) snapshot. Used after a `derive` schema change or a stale
+persists the fresh derived next to the state, then rebases the outbox on top and emits a
+new `State` (+ derived) snapshot. Used after a `derive` schema change or a stale
 derived file.
 
 ## Cross-tab consistency, in one place
@@ -208,7 +208,7 @@ How parallel tabs stay consistent:
 | Risk | How it's handled |
 | ---- | ---------------- |
 | Two tabs mutate OPFS at once | The store serializes every file read-modify-write behind one OPFS lock. |
-| Db + derived written at different times | Both written in one store transaction, tied to `serverVersion`. |
+| State + derived written at different times | Both written in one store transaction, tied to `serverVersion`. |
 | Two tabs apply the same server patch | `serverVersion` dedup inside the store's `applyPatch`. |
 | Two tabs send the same action | `sent` flag persisted in the shared outbox + a separate send lock. |
 | A tab dispatching vs another tab's older in-memory state | `BroadcastChannel` wake → store refreshes from OPFS → rebase → converge. |
@@ -218,7 +218,7 @@ How parallel tabs stay consistent:
 
 The worker delivers the derived to the main thread as follows:
 
-- The derived **rides along with every `Ready`/`Database` snapshot**, so the
+- The derived **rides along with every `Ready`/`State` snapshot**, so the
   main thread needs no separate request. The cost is a `slice()` copy of the
   derived per emission (~30 µs/MB; the transfer itself is zero-copy), and an
   `emitDerived: false` escape hatch: the main thread always gets the *initial*
@@ -243,4 +243,4 @@ reducer) or the two sides could compute different states.
 | **Outbox** | The HLC-ordered actions not yet applied/acked by the server. |
 | **Derived** | A value computed from the state, never synced (index/cache). |
 | **Rebase** | Replaying the outbox through the reducer on top of the committed content. |
-| **`serverVersion`** | The id tying the on-disk db + derived pair to a content version. |
+| **`serverVersion`** | The id tying the on-disk state + derived pair to a content version. |

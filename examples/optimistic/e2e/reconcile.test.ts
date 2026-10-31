@@ -5,7 +5,7 @@
  * would freeze the UI as long as it freezes the worker. Optimistic rendering is
  * a cheap O(1) `done` flip, and the overlay entry is removed the instant the
  * worker commits (`subscribeDispatched` fires before the commit snapshot is
- * delivered to `subscribeDatabase`), so the next render reconciles to the
+ * delivered to `subscribeState`), so the next render reconciles to the
  * authoritative snapshot without re-applying anything.
  *
  * These tests pin that: (1) the patch shows the optimistic flip while the

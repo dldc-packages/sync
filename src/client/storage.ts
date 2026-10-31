@@ -28,11 +28,11 @@ export interface TDebugState {
 }
 
 /**
- * The engine's persisted bookkeeping, stored next to the db and derived files.
+ * The engine's persisted bookkeeping, stored next to the state and derived files.
  *
  * Distinct from the synced file content (the "state"), which the store holds as
  * an opaque ArrayBuffer. This is the per-origin metadata that all tabs share:
- * identity, the HLC clock, the outbox, error history, the version the db
+ * identity, the HLC clock, the outbox, error history, the version the state
  * corresponds to, and the last known context.
  */
 export interface Bookkeeping {
@@ -40,7 +40,7 @@ export interface Bookkeeping {
   hlc: string | null; // serialized last HLC timestamp
   outbox: SanitizedOutboxAction[];
   errors: StoredError[]; // local worker errors (not synced)
-  serverVersion: string | null; // version ID of the db file
+  serverVersion: string | null; // version ID of the state file
   context: SanitizedContext | null; // last known sanitized context (for offline startup fallback)
 }
 
@@ -52,11 +52,11 @@ export interface Bookkeeping {
 export interface Storage {
   readMeta(): Promise<Bookkeeping>;
   writeMeta(meta: Bookkeeping): Promise<void>;
-  readDb(): Promise<Uint8Array>;
-  writeDb(content: Uint8Array): Promise<void>;
+  readState(): Promise<Uint8Array>;
+  writeState(content: Uint8Array): Promise<void>;
   readDerived(): Promise<Uint8Array>;
   writeDerived(content: Uint8Array): Promise<void>;
-  deleteDb(): Promise<void>;
+  deleteState(): Promise<void>;
 }
 
 export interface StorageParams {
@@ -76,11 +76,11 @@ export function createStorage({
   return {
     readMeta,
     writeMeta,
-    readDb,
-    writeDb,
+    readState,
+    writeState,
     readDerived,
     writeDerived,
-    deleteDb,
+    deleteState,
   };
 
   // --- Helpers ---
@@ -135,7 +135,7 @@ export function createStorage({
     accessHandle.flush();
   }
 
-  async function readDb(): Promise<Uint8Array> {
+  async function readState(): Promise<Uint8Array> {
     const root = await navigator.storage.getDirectory();
     const handle = await root.getFileHandle(stateFileName, { create: true });
     const accessHandle = await handle.createSyncAccessHandle();
@@ -150,7 +150,7 @@ export function createStorage({
     }
   }
 
-  async function writeDb(content: Uint8Array): Promise<void> {
+  async function writeState(content: Uint8Array): Promise<void> {
     const root = await navigator.storage.getDirectory();
     const handle = await root.getFileHandle(stateFileName, { create: true });
     const accessHandle = await handle.createSyncAccessHandle();
@@ -191,7 +191,7 @@ export function createStorage({
     }
   }
 
-  async function deleteDb(): Promise<void> {
+  async function deleteState(): Promise<void> {
     const root = await navigator.storage.getDirectory();
     try {
       await root.removeEntry(stateFileName);

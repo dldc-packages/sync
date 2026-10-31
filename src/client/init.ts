@@ -25,7 +25,7 @@ export interface EngineInit<Action, Context> {
   outbox: SanitizedOutboxAction[];
   serverVersion: string | null;
   errors: StoredError[];
-  database: Uint8Array;
+  state: Uint8Array;
   derived: Uint8Array;
   storage: Storage;
 }
@@ -88,12 +88,12 @@ export async function init<Action, Context>({
     EngineInit<Action, Context>,
     "reducer" | "derive" | "storage"
   > | null> {
-    // Load persisted state + DB from OPFS (under the lock) — load BEFORE
+    // Load persisted state from OPFS (under the lock) — load BEFORE
     // getMe so we can fall back to the saved context if the network is
     // unavailable. The store owns this lock; the boot read lives in store.ts.
     const {
       context: savedContext,
-      database,
+      state,
       clientId,
       outbox,
       errors,
@@ -128,7 +128,7 @@ export async function init<Action, Context>({
       await saveContext(storage, opfsLockName, context);
     }
 
-    return { context, database, clientId, outbox, errors, serverVersion, derived };
+    return { context, state, clientId, outbox, errors, serverVersion, derived };
   }
 
   /** Calls getMe with an abort timeout so we don't block startup on a slow network. */

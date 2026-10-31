@@ -146,8 +146,8 @@ describe("E2E: todo app", () => {
     const result = await page.evaluate(async (id: string) => {
       const client = (window as any).__client as {
         ready: () => Promise<void>;
-        subscribeDatabase: (cb: (bytes: Uint8Array) => void) => () => void;
-        getDatabase: () => Uint8Array;
+        subscribeState: (cb: (bytes: Uint8Array) => void) => () => void;
+        getState: () => Uint8Array;
         dispatchAsync: (action: unknown) => Promise<void>;
       };
       await client.ready();
@@ -158,32 +158,32 @@ describe("E2E: todo app", () => {
       };
 
       let eventsWithAction = 0;
-      const unsub = client.subscribeDatabase((bytes) => {
+      const unsub = client.subscribeState((bytes) => {
         const state = decode(bytes);
         if (state.todos.some((t) => t.id === id)) eventsWithAction += 1;
       });
 
-      // Ordering guarantee: the worker posts the "Database" message with the
+      // Ordering guarantee: the worker posts the "State" message with the
       // action BEFORE the "Dispatched" ack that resolves this promise, and
       // worker->main messages are FIFO. So by the time the await resumes, the
-      // action must already be in getDatabase() and in a delivered event.
+      // action must already be in getState() and in a delivered event.
       await client.dispatchAsync({ kind: "AddTodo", id, text: `async ${id}` });
 
-      const inDbAtResolve = decode(client.getDatabase()).todos.some((t) => t.id === id);
+      const inStateAtResolve = decode(client.getState()).todos.some((t) => t.id === id);
       unsub();
-      return { eventsWithAction, inDbAtResolve };
+      return { eventsWithAction, inStateAtResolve };
     }, todoId);
 
-    if (!result.inDbAtResolve) {
+    if (!result.inStateAtResolve) {
       throw new Error(
-        `dispatchAsync resolved but the action was not in getDatabase() yet (${JSON.stringify(
+        `dispatchAsync resolved but the action was not in getState() yet (${JSON.stringify(
           result,
         )})`,
       );
     }
     if (result.eventsWithAction < 1) {
       throw new Error(
-        `dispatchAsync resolved but no subscribeDatabase event included the action (${JSON.stringify(
+        `dispatchAsync resolved but no subscribeState event included the action (${JSON.stringify(
           result,
         )})`,
       );
@@ -207,7 +207,7 @@ describe("E2E: todo app", () => {
       async ({ a, b }: { a: string; b: string }) => {
         const client = (window as any).__client as {
           ready: () => Promise<void>;
-          getDatabase: () => Uint8Array;
+          getState: () => Uint8Array;
           dispatchAsync: (action: unknown) => Promise<void>;
         };
         await client.ready();
@@ -223,8 +223,8 @@ describe("E2E: todo app", () => {
           client.dispatchAsync({ kind: "AddTodo", id: b, text: `b ${b}` }),
         ]);
 
-        const ids = decode(client.getDatabase()).todos.map((t) => t.id);
-        return { hasA: ids.includes(a), hasB: ids.includes(b), dbOrder: ids };
+        const ids = decode(client.getState()).todos.map((t) => t.id);
+        return { hasA: ids.includes(a), hasB: ids.includes(b), stateOrder: ids };
       },
       { a: id1, b: id2 },
     );

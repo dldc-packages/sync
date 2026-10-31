@@ -14,7 +14,7 @@ const client = createWorkerClient<Action, Context>({
 worker.addEventListener("message", (event) => client.receive(event.data));
 
 /** Decode the current JSON file bytes into a TodoState. An empty file (fresh) means an empty list. */
-function decodeDatabase(bytes: Uint8Array): TodoState {
+function decodeState(bytes: Uint8Array): TodoState {
   if (bytes.byteLength === 0) {
     return { todos: [] };
   }
@@ -60,11 +60,11 @@ list.addEventListener("click", (e) => {
   }
 });
 
-client.subscribeDatabase((bytes) => {
-  render(decodeDatabase(bytes));
+client.subscribeState((bytes) => {
+  render(decodeState(bytes));
 });
 
-// The derived index is delivered with every database snapshot, so the summary
+// The derived index is delivered with every state snapshot, so the summary
 // always reflects the same state — including optimistic (pending) changes.
 client.subscribeDerived((bytes) => {
   renderSummary(decodeDerived(bytes));
@@ -100,7 +100,7 @@ function renderSummary(derived: TodoDerived): void {
 void client.ready().then(() => {
   (window as any).__syncReady = true;
   (window as any).__client = client;
-  render(decodeDatabase(client.getDatabase()));
+  render(decodeState(client.getState()));
   const derived = client.getDerived();
   if (derived !== null) {
     renderSummary(decodeDerived(derived));

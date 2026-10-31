@@ -13,12 +13,12 @@ export type TWorkerOutMessage =
   | {
       kind: "Ready";
       context: SanitizedContext;
-      database: ArrayBuffer;
+      state: ArrayBuffer;
       /** Always present: the initial derived, so the client is never null-derived. */
       derived: ArrayBuffer;
     }
   | {
-      kind: "Database";
+      kind: "State";
       content: ArrayBuffer;
       dispatchedId?: number;
       /** Present on every snapshot unless the engine runs with `emitDerived: false`. */

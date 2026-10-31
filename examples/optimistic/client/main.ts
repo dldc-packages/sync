@@ -20,7 +20,7 @@ import { applyOptimisticToggle } from "./optimistic.ts";
  *  3. `client.subscribeDispatched(token)` fires the INSTANT the worker's
  *     commit snapshot (the one that contains the action) is about to be
  *     delivered — the overlay entry is dropped there, so the next
- *     `subscribeDatabase` render reconciles to the authoritative snapshot
+ *     `subscribeState` render reconciles to the authoritative snapshot
  *     without re-applying anything;
  *  4. if the engine fails to apply the action, `dispatchAsync` rejects and the
  *     overlay rolls back.
@@ -84,14 +84,14 @@ let serverPending = 0; // number of actions the server hasn't acked yet (subscri
 
 // ─── subscriptions ──────────────────────────────────────────────────────────
 
-client.subscribeDatabase((bytes) => {
+client.subscribeState((bytes) => {
   workerState = decode(bytes);
   render();
 });
 
 /**
  * The commit signal. Fires synchronously, BEFORE the snapshot that contains
- * the action is delivered to `subscribeDatabase` — so the optimistic toggle is
+ * the action is delivered to `subscribeState` — so the optimistic toggle is
  * dropped here and the next render (from that very snapshot) reconciles to the
  * authoritative `done` value. No re-apply, no flicker.
  */

@@ -86,7 +86,7 @@ const dispatchSanitized = (action: Action) => ({ _action: action });
 /** In-memory `Storage` fake: the single source of truth for the store under test. */
 function createStorageMock(initial: {
   serverVersion?: string | null;
-  db?: Uint8Array;
+  state?: Uint8Array;
   derived?: Uint8Array;
   outbox?: SanitizedOutboxAction[];
 }) {
@@ -98,7 +98,7 @@ function createStorageMock(initial: {
     serverVersion: initial.serverVersion ?? null,
     context: null,
   };
-  let db = initial.db ?? EMPTY;
+  let state = initial.state ?? EMPTY;
   let derived = initial.derived ?? EMPTY;
   const derivedWrites: Uint8Array[] = [];
 
@@ -107,17 +107,17 @@ function createStorageMock(initial: {
     writeMeta: async (m) => {
       meta = m;
     },
-    readDb: async () => db,
-    writeDb: async (d) => {
-      db = d;
+    readState: async () => state,
+    writeState: async (d) => {
+      state = d;
     },
     readDerived: async () => derived,
     writeDerived: async (d) => {
       derivedWrites.push(d);
       derived = d;
     },
-    deleteDb: async () => {
-      db = EMPTY;
+    deleteState: async () => {
+      state = EMPTY;
     },
   };
 
@@ -127,8 +127,8 @@ function createStorageMock(initial: {
     get meta() {
       return meta;
     },
-    get db() {
-      return db;
+    get state() {
+      return state;
     },
     /** Simulate another tab having committed a new server content + version. */
     setServerContent: async (
@@ -136,7 +136,7 @@ function createStorageMock(initial: {
       version: string,
       outbox: SanitizedOutboxAction[],
     ) => {
-      db = content;
+      state = content;
       meta.serverVersion = version;
       meta.outbox = outbox;
     },
@@ -144,21 +144,21 @@ function createStorageMock(initial: {
 }
 
 function makeStore(opts: {
-  initialDatabase?: Uint8Array;
+  initialState?: Uint8Array;
   initialOutbox?: SanitizedOutboxAction[];
   derive?: TDerive;
   reducer?: TStoreReducer<Action, Context>;
   serverVersion?: string;
 }) {
   const serverVersion = opts.serverVersion ?? "s0";
-  const initialDatabase = opts.initialDatabase ?? EMPTY;
-  const fake = createStorageMock({ serverVersion, db: initialDatabase });
+  const initialState = opts.initialState ?? EMPTY;
+  const fake = createStorageMock({ serverVersion, state: initialState });
   const snapshots: Array<{ content: Uint8Array; derived: Uint8Array; dispatchId?: number }> = [];
   const store = createStore<Action, Context>({
     context: {},
     initialServerVersion: serverVersion,
     initialOutbox: opts.initialOutbox ?? [],
-    initialState: initialDatabase,
+    initialState: initialState,
     initialDerived: EMPTY,
     storage: fake.storage,
     opfsLockName: "test-lock",
@@ -173,14 +173,14 @@ function makeStore(opts: {
     onStateChange: () => {},
   });
   // NOTE: return live getters — spreading `fake` would snapshot the getter
-  // values (e.g. `db`) at construction time.
+  // values (e.g. `state`) at construction time.
   return {
     store,
     storage: fake.storage,
     derivedWrites: fake.derivedWrites,
     setServerContent: fake.setServerContent,
-    get db() {
-      return fake.db;
+    get state() {
+      return fake.state;
     },
     get meta() {
       return fake.meta;
@@ -190,10 +190,10 @@ function makeStore(opts: {
 }
 
 describe("createStore (owns the OPFS lock)", () => {
-  it("derives the initial derived from the database and replays the outbox on top", () => {
-    const initialDatabase = encode<TestState>({ items: [{ id: "a", done: true }] });
+  it("derives the initial derived from the state and replays the outbox on top", () => {
+    const initialState = encode<TestState>({ items: [{ id: "a", done: true }] });
     const { store } = makeStore({
-      initialDatabase,
+      initialState,
       initialOutbox: [sanitizedOf({ kind: "add", id: "b" }, 1)],
       derive: rebuildDerive,
     });
@@ -203,7 +203,7 @@ describe("createStore (owns the OPFS lock)", () => {
     // local content includes the outbox add
     const local = decode<TestState>(store.getState(), { items: [] });
     expect(local.items.some((i) => i.id === "b")).toBe(true);
-    expect(store.getServerState()).toBe(initialDatabase);
+    expect(store.getServerState()).toBe(initialState);
   });
 
   it("updates derived optimistically on dispatch and never persists", async () => {
@@ -238,7 +238,7 @@ describe("createStore (owns the OPFS lock)", () => {
     const serverOld = encode<TestState>({ items: [] });
     const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
     const { store, meta, derivedWrites, storage } = makeStore({
-      initialDatabase: serverOld,
+      initialState: serverOld,
       serverVersion: "s0",
       derive: rebuildDerive,
     });
@@ -255,8 +255,8 @@ describe("createStore (owns the OPFS lock)", () => {
     const patch = diff(signature(serverOld), serverNew);
     await store.applyPatch("v1", patch, lastTs);
 
-    // the OPFS db is patched into the new content
-    expect((await storage.readDb()).toString()).toBe(serverNew.toString());
+    // the OPFS state file is patched into the new content
+    expect((await storage.readState()).toString()).toBe(serverNew.toString());
     expect(store.getServerState().toString()).toBe(serverNew.toString());
     expect(meta.serverVersion).toBe("v1");
     expect(meta.outbox).toHaveLength(0);
@@ -268,7 +268,7 @@ describe("createStore (owns the OPFS lock)", () => {
 
   it("drops acked outbox actions when the server acknowledges them", async () => {
     const serverOld = encode<TestState>({ items: [] });
-    const { store, meta } = makeStore({ initialDatabase: serverOld, serverVersion: "s0" });
+    const { store, meta } = makeStore({ initialState: serverOld, serverVersion: "s0" });
 
     await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
     await store.dispatch(dispatchSanitized({ kind: "toggle", id: "a" }));
@@ -282,8 +282,8 @@ describe("createStore (owns the OPFS lock)", () => {
   it("dedups a patch version another tab already handled", async () => {
     const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
     // The store starts having only fetched s0, but another tab already
-    // committed v1 to disk (db + meta).
-    const fake = createStorageMock({ db: serverNew, serverVersion: "v1", outbox: [] });
+    // committed v1 to disk (state + meta).
+    const fake = createStorageMock({ state: serverNew, serverVersion: "v1", outbox: [] });
     const store = createStore<Action, Context>({
       context: {},
       initialServerVersion: "s0",
@@ -302,7 +302,7 @@ describe("createStore (owns the OPFS lock)", () => {
     });
 
     // Applying the "v1" patch on top of a meta that already points at v1 hits
-    // the dedup path: read the fresh db, re-derive + persist, no double-apply.
+    // the dedup path: read the fresh state, re-derive + persist, no double-apply.
     await store.applyPatch("v1", null, null);
     expect(store.getServerState().toString()).toBe(serverNew.toString());
     expect(fake.derivedWrites).toHaveLength(1);
@@ -322,7 +322,7 @@ describe("createStore (owns the OPFS lock)", () => {
     const serverOld = encode<TestState>({ items: [] });
     const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
     const { store, derivedWrites, storage } = makeStore({
-      initialDatabase: serverOld,
+      initialState: serverOld,
       derive: rebuildDerive,
       reducer: plainReducer,
     });
@@ -338,10 +338,10 @@ describe("createStore (owns the OPFS lock)", () => {
     expect(decodeDone(store.getDerived())).toBe(0);
     expect(derivedWrites).toHaveLength(0);
 
-    // a real patch updates the db and recommits the derived for the new content
+    // a real patch updates the state and recommits the derived for the new content
     const patch = diff(signature(serverOld), serverNew);
     await store.applyPatch("v1", patch, null);
-    expect((await storage.readDb()).toString()).toBe(serverNew.toString());
+    expect((await storage.readState()).toString()).toBe(serverNew.toString());
     expect(decodeDone(store.getDerived())).toBe(1);
     expect(derivedWrites).toHaveLength(1);
     expect(decodeDone(derivedWrites[0])).toBe(1);
@@ -359,7 +359,7 @@ describe("createStore (owns the OPFS lock)", () => {
     expect(store.getServerState().byteLength).toBe(0);
     expect(derivedWrites).toHaveLength(0);
 
-    // another tab applies a patch: db + version on the shared files change,
+    // another tab applies a patch: state + version on the shared files change,
     // but this tab's unacked actions stay in the shared outbox
     await setServerContent(serverNew, "v1", [...meta.outbox]);
 
@@ -376,7 +376,7 @@ describe("createStore (owns the OPFS lock)", () => {
   });
 
   it("forceRecomputeDerived rebuilds the derived from scratch, ignoring the current value", async () => {
-    const state = encode<TestState>({
+    const serverState = encode<TestState>({
       items: [
         { id: "a", done: true },
         { id: "b", done: true },
@@ -385,7 +385,7 @@ describe("createStore (owns the OPFS lock)", () => {
     const stale = encode<TestDerived>({ done: 99 });
     const outboxAction = sanitizedOf({ kind: "toggle", id: "a" }, 1);
     const fake = createStorageMock({
-      db: state,
+      state: serverState,
       serverVersion: "s0",
       outbox: [outboxAction],
       derived: stale,
@@ -396,7 +396,7 @@ describe("createStore (owns the OPFS lock)", () => {
       initialServerVersion: "s0",
       // an optimistic toggle on a -> the live derived diverges from the committed one
       initialOutbox: [outboxAction],
-      initialState: state,
+      initialState: serverState,
       initialDerived: stale,
       storage: fake.storage,
       opfsLockName: "test-lock",

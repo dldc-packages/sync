@@ -26,8 +26,8 @@ const workerEngine = createWorkerEngine<Action, Context>({
   restoreContext: (data) => data as Context,
   sanitizeContext: (context) => context,
   // OPFS + broadcast/lock names must be unique per app to avoid collisions.
-  stateFileName: "todo-database.json",
-  metaFileName: "todo-state.json",
+  stateFileName: "todo-state.json",
+  metaFileName: "todo-meta.json",
   derivedFileName: "todo-derived.json",
   sendLockName: "todo-dispatch",
   opfsLockName: "todo-opfs",
