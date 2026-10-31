@@ -1,12 +1,19 @@
 import { createSubscription, type TSubscriptionCallback, type TUnsubscribe } from "@dldc/pubsub";
 import { createDeferred, type TDeferred } from "../shared/deferred.ts";
 import type { TRestoreContext, TSanitizeAction } from "../shared/types.ts";
-import type { TDebugState } from "./opfs.ts";
+import type { TDebugState } from "./storage.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export interface WorkerClient<Action, Context> {
   ready(): Promise<void>;
   subscribeDatabase(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
+  /**
+   * Fires with the derived value (index/cache) for the same snapshot that
+   * `subscribeDatabase` delivers, immediately before it. One event per
+   * snapshot. When the engine runs with `emitDerived: false`, only the initial
+   * (Ready) derived is delivered — later snapshots don't fire it.
+   */
+  subscribeDerived(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
   /**
    * Fires with the id of a dispatch at the exact moment its commit snapshot
    * (the one that contains the action) is ready but not yet delivered.
@@ -24,6 +31,7 @@ export interface WorkerClient<Action, Context> {
   subscribeDebugState(callback: TSubscriptionCallback<TDebugState>): TUnsubscribe;
   getDatabase(): Uint8Array;
   getDatabaseVersion(): number;
+  getDerived(): Uint8Array;
   getContext(): Context;
   getDebugState(): TDebugState;
   dispatch(action: Action): void;
@@ -46,6 +54,8 @@ export interface WorkerClient<Action, Context> {
 interface TWorkerInternalState<Context> {
   version: number;
   database: Uint8Array;
+  /** The derived value for the latest delivered snapshot (never null). */
+  derived: Uint8Array;
   context: Context;
   debugState: TDebugState;
 }
@@ -67,6 +77,7 @@ export function createWorkerClient<Action, Context>({
   restoreContext,
 }: TWorkerClientParams<Action, Context>): WorkerClient<Action, Context> {
   const databaseSubscriptions = createSubscription<Uint8Array>();
+  const derivedSubscriptions = createSubscription<Uint8Array>();
   const dispatchedSubscriptions = createSubscription<number>();
   const debugStateSubscriptions = createSubscription<TDebugState>();
 
@@ -80,11 +91,13 @@ export function createWorkerClient<Action, Context>({
 
   return {
     subscribeDatabase: databaseSubscriptions.subscribe,
+    subscribeDerived: derivedSubscriptions.subscribe,
     subscribeDispatched: dispatchedSubscriptions.subscribe,
     subscribeDebugState: debugStateSubscriptions.subscribe,
     ready,
     getDatabase,
     getDatabaseVersion,
+    getDerived,
     getContext,
     getDebugState,
     dispatch,
@@ -116,6 +129,13 @@ export function createWorkerClient<Action, Context>({
       throw new Error("Worker not ready");
     }
     return state.database;
+  }
+
+  function getDerived(): Uint8Array {
+    if (state === null) {
+      throw new Error("Worker not ready");
+    }
+    return state.derived;
   }
 
   function getContext(): Context {
@@ -236,9 +256,11 @@ export function createWorkerClient<Action, Context>({
       state = {
         version: 1,
         database: new Uint8Array(message.database),
+        derived: new Uint8Array(message.derived),
         context: restoreContext(message.context._context),
-        debugState: { pendingCount: 0, errors: [] },
+        debugState: { outboxCount: 0, errors: [] },
       };
+      derivedSubscriptions.emit(state.derived);
       databaseSubscriptions.emit(state.database);
       return;
     }
@@ -247,6 +269,9 @@ export function createWorkerClient<Action, Context>({
         throw new Error("Worker not ready");
       }
       state.database = new Uint8Array(message.content);
+      if (message.derived !== undefined) {
+        state.derived = new Uint8Array(message.derived);
+      }
       state.version++;
       // If this snapshot is the commit of a dispatch, notify its subscribers
       // now — with `state.database` already pointing at the commit snapshot,
@@ -259,6 +284,14 @@ export function createWorkerClient<Action, Context>({
       if (message.dispatchedId !== undefined) {
         dispatchedSubscriptions.emit(message.dispatchedId);
       }
+      // Derived rides along with the same snapshot, just before the database
+      // so the database render is the final trigger. With `emitDerived: false`
+      // on the engine the snapshot carries no derived — then it simply isn't
+      // re-emitted and the previous value stays (still non-null).
+      if (message.derived !== undefined) {
+        state.derived = new Uint8Array(message.derived);
+        derivedSubscriptions.emit(state.derived);
+      }
       databaseSubscriptions.emit(state.database);
       return;
     }
@@ -267,7 +300,7 @@ export function createWorkerClient<Action, Context>({
         throw new Error("Worker not ready");
       }
       state.debugState = {
-        pendingCount: message.pendingCount,
+        outboxCount: message.outboxCount,
         errors: message.errors,
       };
       debugStateSubscriptions.emit(state.debugState);

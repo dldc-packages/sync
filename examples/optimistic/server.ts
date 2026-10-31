@@ -1,15 +1,15 @@
 import { createReadStream, existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { createStore } from "../../src/server.ts";
-import { reducer, restoreAction } from "./shared.ts";
+import { derive, reducer, restoreAction } from "./shared.ts";
 
 /**
  * The optimistic example server — identical in shape to the todo example.
  *
  * `createStore` wires up:
- *  - a file store backed by `filePath` (the JSON tasks file) — the app data,
+ *  - a state store backed by `stateFilePath` (the JSON tasks file) — the app data,
  *    and the source of truth synced to clients via rsync
  *  - a state database (SQLite, internal to the lib) that tracks per-client
  *    last-applied timestamps + the file version across restarts
@@ -25,10 +25,12 @@ const DATA_DIR = process.env.DATA_DIR ?? DEFAULT_DATA_DIR;
 const PORT = Number(process.env.PORT ?? 3100);
 
 const store = await createStore({
-  stateDatabasePath: `${DATA_DIR}/state.sqlite`,
-  filePath: `${DATA_DIR}/tasks.json`,
-  getReducer: () => Promise.resolve(reducer),
+  metaFilePath: `${DATA_DIR}/state.sqlite`,
+  stateFilePath: `${DATA_DIR}/tasks.json`,
+  derivedFilePath: `${DATA_DIR}/derived.json`,
   restoreAction,
+  getReducer: () => Promise.resolve(reducer),
+  getDerive: () => Promise.resolve(derive),
 });
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {

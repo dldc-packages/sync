@@ -1,8 +1,16 @@
-import * as v from "valibot";
 import type { TSubscriptionCallback, TUnsubscribe } from "@dldc/pubsub";
+import * as v from "valibot";
+import { unwrapReducerState } from "../shared/derived.ts";
 import { fileSyncTransportWriter } from "../shared/fileSync.ts";
-import type { TGetStoreReducer, TRestoreAction } from "../shared/types.ts";
-import { createFileStore, type TFileStoreEvent, type TStoreUpdateContext } from "./fileStore.ts";
+import type {
+  TDerive,
+  TGetDerive,
+  TGetStoreReducer,
+  TRestoreAction,
+  TStoreReducerResult,
+} from "../shared/types.ts";
+import { createDerivedStore } from "./derivedStore.ts";
+import { createStateStore, type TStateStoreEvent, type TStoreUpdateContext } from "./stateStore.ts";
 import { createStateDb } from "./stateDb.ts";
 
 export interface TStore<Context> {
@@ -16,14 +24,16 @@ export interface TStore<Context> {
    * bytes are written, so `getCurrent()` inside the callback already returns
    * them. Returns an unsubscribe function.
    */
-  subscribe(callback: TSubscriptionCallback<TFileStoreEvent>): TUnsubscribe;
+  subscribe(callback: TSubscriptionCallback<TStateStoreEvent>): TUnsubscribe;
 }
 
 export interface StoreParams<Action, Context> {
-  stateDatabasePath: string;
-  filePath: string;
+  metaFilePath: string;
+  stateFilePath: string;
+  derivedFilePath: string;
   restoreAction: TRestoreAction<Action>;
   getReducer: TGetStoreReducer<Action, Context>;
+  getDerive: TGetDerive;
 }
 
 const vDispatchRequest = v.object({
@@ -32,32 +42,40 @@ const vDispatchRequest = v.object({
 });
 
 export async function createStore<Action, Context>({
-  stateDatabasePath,
-  filePath,
-  getReducer,
+  metaFilePath,
+  stateFilePath,
+  derivedFilePath,
   restoreAction,
+  getReducer,
+  getDerive,
 }: StoreParams<Action, Context>): Promise<TStore<Context>> {
-  const stateDb = await createStateDb({ stateDatabasePath });
-  const fileStore = createFileStore({
-    filePath,
+  const stateDb = await createStateDb({ metaFilePath });
+  const stateStore = createStateStore({
     getDbVersion: stateDb.getDbVersion,
     setDbVersion: stateDb.setDbVersion,
+    stateFilePath,
   });
   const reducer = await getReducer();
+  const derive: TDerive = await getDerive();
+  const derivedStore = createDerivedStore({
+    stateStore,
+    derivedFilePath,
+    derive,
+  });
 
   return {
     dispatch,
     sync,
-    getCurrent: fileStore.getCurrent,
-    update: fileStore.update,
-    subscribe: fileStore.subscribe,
+    getCurrent: () => stateStore.getCurrent(),
+    update,
+    subscribe: (callback) => stateStore.subscribe(callback),
   };
 
   function sync(clientSignature: Uint8Array, clientId: string, signal: AbortSignal): Response {
     // compare() returns { patch, version } atomically — version is captured at
     // comparison time, avoiding a race where getVersion() could change between
     // the compare and the UpToDate message
-    const { patch: initialPatch, version: initialVersion } = fileStore.compare(
+    const { patch: initialPatch, version: initialVersion } = stateStore.compare(
       clientSignature, // new Uint8Array(reqBody),
     );
     // Read once at connection time, then maintain in-memory via the subscribe
@@ -87,7 +105,7 @@ export async function createStore<Action, Context>({
             },
           });
         }
-        const unsub = fileStore.subscribe((event) => {
+        const unsub = stateStore.subscribe((event) => {
           // Update the in-memory variable only if this patch was triggered by
           // this client's dispatch. Otherwise keep the existing value — a
           // dispatch from another client changes the DB content but not THIS
@@ -131,13 +149,28 @@ export async function createStore<Action, Context>({
       return jsonResponse({ status: "ok", applied: false }); // already applied, dedup
     }
 
-    fileStore.update((current) => reducer(current, context, action), {
-      clientId,
-      clientLastApplied: ts,
-    });
-    return jsonResponse({ status: "ok", applied: true });
+    let result: TStoreReducerResult | undefined;
+    stateStore.update(
+      (current) => {
+        const next = reducer(current, context, action, derivedStore.getCurrent());
+        result = next;
+        return unwrapReducerState(next);
+      },
+      { clientId, clientLastApplied: ts },
+    );
 
-    // return dispatchHandler(fileStore, clientId, reducer, context, action, ts);
+    if (result !== undefined) {
+      derivedStore.applyReducerResult(result);
+    }
+    return jsonResponse({ status: "ok", applied: true });
+  }
+
+  function update(
+    updater: (current: Uint8Array) => Uint8Array,
+    context: TStoreUpdateContext,
+  ): void {
+    stateStore.update((current) => updater(current), context);
+    derivedStore.recompute();
   }
 
   function jsonResponse(data: unknown, status = 200) {

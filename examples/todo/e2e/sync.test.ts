@@ -237,4 +237,67 @@ describe("E2E: todo app", () => {
 
     await ctx.close();
   });
+
+  test("derived index reaches the main thread (optimistic) and drives the summary", async () => {
+    const { browser, baseUrl } = handle!;
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await waitForSyncReady(page);
+
+    const id1 = `d1-${Date.now()}`;
+    const id2 = `d2-${Date.now()}`;
+
+    const result = await page.evaluate(
+      async ({ a, b }: { a: string; b: string }) => {
+        const client = (window as any).__client as {
+          ready: () => Promise<void>;
+          getDerived: () => Uint8Array;
+          dispatchAsync: (action: unknown) => Promise<void>;
+        };
+        await client.ready();
+
+        // Three optimistic dispatches: the derived must reflect them as soon as
+        // each dispatchAsync resolves (before the server round-trip ack).
+        await client.dispatchAsync({ kind: "AddTodo", id: a, text: "derived one" });
+        await client.dispatchAsync({ kind: "AddTodo", id: b, text: "derived two" });
+        await client.dispatchAsync({ kind: "ToggleTodo", id: a });
+
+        const bytes = client.getDerived();
+        const derived = JSON.parse(new TextDecoder().decode(bytes)) as {
+          total: number;
+          done: number;
+          byId: Record<string, { done: boolean }>;
+        };
+        return {
+          total: derived.total,
+          done: derived.done,
+          summary: document.querySelector("#todo-summary")?.textContent ?? "",
+          aDone: derived.byId[a]?.done ?? null,
+          bDone: derived.byId[b]?.done ?? null,
+        };
+      },
+      { a: id1, b: id2 },
+    );
+
+    if (result.aDone !== true) {
+      throw new Error(`derived should report the toggled todo as done: ${JSON.stringify(result)}`);
+    }
+    if (result.bDone !== false) {
+      throw new Error(
+        `derived should report the untouched todo as open: ${JSON.stringify(result)}`,
+      );
+    }
+    if (result.total < 2 || result.done < 1) {
+      throw new Error(`derived counters look wrong: ${JSON.stringify(result)}`);
+    }
+    if (!result.summary.includes("done")) {
+      throw new Error(
+        `#todo-summary did not render from the derived index: ${JSON.stringify(result)}`,
+      );
+    }
+
+    await ctx.close();
+  });
 });

@@ -1,5 +1,5 @@
 import { createWorkerEngine } from "../../../src/client.ts";
-import { reducer, restoreAction } from "../shared.ts";
+import { derive, reducer, restoreAction } from "../shared.ts";
 import type { Action, Context } from "../shared.ts";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -26,11 +26,13 @@ const workerEngine = createWorkerEngine<Action, Context>({
   restoreContext: (data) => data as Context,
   sanitizeContext: (context) => context,
   // OPFS + broadcast/lock names must be unique per app to avoid collisions.
-  dbFileName: "optimistic-tasks.json",
-  stateFileName: "optimistic-state.json",
+  stateFileName: "optimistic-tasks.json",
+  metaFileName: "optimistic-state.json",
   sendLockName: "optimistic-dispatch",
   opfsLockName: "optimistic-opfs",
   crossTabDispatchChannelName: "optimistic-dispatch-notify",
+  getDerive: () => Promise.resolve(derive),
+  derivedFileName: "optimistic-derived.json",
   maxStoredErrors: 20,
   getContextTimeoutMs: 3_000,
 });

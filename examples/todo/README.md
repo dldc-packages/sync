@@ -29,8 +29,8 @@ todo/
     └── style.css
 ```
 
-- **`server.ts`** calls `createStore` with `filePath` (the JSON todo file) and
-  `stateDatabasePath` (SQLite via `better-sqlite3` — internal bookkeeping only,
+- **`server.ts`** calls `createStore` with `stateFilePath` (the JSON todo file) and
+  `metaFilePath` (SQLite via `better-sqlite3` — internal bookkeeping only,
   not the app data).
 - **`client/worker.ts`** runs the engine in a Web Worker: it keeps a local copy
   of the JSON file in OPFS, applies the same reducer locally for instant

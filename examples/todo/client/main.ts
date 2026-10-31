@@ -1,5 +1,5 @@
 import { createWorkerClient } from "../../../src/client.ts";
-import type { Action, Context, TodoState } from "../shared.ts";
+import type { Action, Context, TodoDerived, TodoState } from "../shared.ts";
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), {
   type: "module",
@@ -22,9 +22,19 @@ function decodeDatabase(bytes: Uint8Array): TodoState {
   return JSON.parse(text) as TodoState;
 }
 
+/** Decode the derived index bytes. An empty derived (fresh) means an empty index. */
+function decodeDerived(bytes: Uint8Array): TodoDerived {
+  if (bytes.byteLength === 0) {
+    return { total: 0, done: 0, open: 0, byId: {} };
+  }
+  const text = new TextDecoder().decode(bytes);
+  return JSON.parse(text) as TodoDerived;
+}
+
 const form = document.querySelector<HTMLFormElement>("#todo-form")!;
 const input = document.querySelector<HTMLInputElement>("#todo-input")!;
 const list = document.querySelector<HTMLUListElement>("#todo-list")!;
+const summary = document.querySelector<HTMLParagraphElement>("#todo-summary")!;
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -54,6 +64,12 @@ client.subscribeDatabase((bytes) => {
   render(decodeDatabase(bytes));
 });
 
+// The derived index is delivered with every database snapshot, so the summary
+// always reflects the same state — including optimistic (pending) changes.
+client.subscribeDerived((bytes) => {
+  renderSummary(decodeDerived(bytes));
+});
+
 function render(state: TodoState): void {
   list.replaceChildren(
     ...state.todos.map((todo) => {
@@ -77,8 +93,16 @@ function render(state: TodoState): void {
   );
 }
 
+function renderSummary(derived: TodoDerived): void {
+  summary.textContent = `${derived.open} open · ${derived.done} done · ${derived.total} total`;
+}
+
 client.ready().then(() => {
   (window as any).__syncReady = true;
   (window as any).__client = client;
   render(decodeDatabase(client.getDatabase()));
+  const derived = client.getDerived();
+  if (derived !== null) {
+    renderSummary(decodeDerived(derived));
+  }
 });

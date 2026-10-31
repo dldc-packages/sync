@@ -1,4 +1,4 @@
-import type { TRestoreAction, TSanitizeAction, TStoreReducer } from "../../src/shared.ts";
+import type { TRestoreAction, TSanitizeAction, TDerive, TStoreReducer } from "../../src/shared.ts";
 
 /**
  * Shared types + reducer for the optimistic example.
@@ -51,6 +51,11 @@ function encode(state: TaskState): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(state));
 }
 
+/** Encode an arbitrary serializable value back into a raw file. */
+function encodeJson<T>(value: T): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
 /**
  * The reducer: a pure, deterministic function. Both the server and every
  * client's worker apply the exact same action to reach the same state.
@@ -88,3 +93,24 @@ export const reducer: TStoreReducer<Action, Context> = (file, _context, action):
 /** Actions travel between client and server as JSON, so sanitize/restore are identity. */
 export const sanitizeAction: TSanitizeAction<Action> = (action) => action;
 export const restoreAction: TRestoreAction<Action> = (data) => data as Action;
+
+// ─── derived ─────────────────────────────────────────────────────────────────
+//
+// Derived is always on: every app maintains a second, local value computed from
+// the state. Here it's a tiny task-count index — the optimistic example's real
+// point is the main-thread patch layer in `./main.ts`, so this stays minimal
+// and just keeps the example honest (client and server run the same `derive`).
+
+export interface TaskDerived {
+  total: number;
+  done: number;
+}
+
+/** Recompute the task-count index from the state file (ignores the previous hint). */
+export const derive: TDerive = (file) => {
+  const state = decode(file);
+  return encodeJson<TaskDerived>({
+    total: state.tasks.length,
+    done: state.tasks.filter((t) => t.done).length,
+  });
+};

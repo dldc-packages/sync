@@ -1,5 +1,6 @@
 import type {
   TGetContext,
+  TGetDerive,
   TGetStoreReducer,
   TRestoreAction,
   TRestoreContext,
@@ -8,9 +9,9 @@ import type {
 import { createApiClient } from "./api.ts";
 import { createDispatcher } from "./dispatcher.ts";
 import { init } from "./init.ts";
-import type { OpfsClient, StoredError, TDebugState } from "./opfs.ts";
 import { createSender } from "./sender.ts";
-import { createStore } from "./store.ts";
+import type { StoredError, TDebugState } from "./storage.ts";
+import { createStore, type Store } from "./store.ts";
 import { createSyncer } from "./syncer.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
@@ -44,17 +45,29 @@ export interface TWorkerEngineParams<Action, Context> {
    */
   close: () => void;
   crossTabDispatchChannelName: string;
-  dbFileName: string;
+  stateFileName: string;
   dispatchPath: (clientId: string) => string;
   getContext: TGetContext<Context>;
   getContextTimeoutMs: number;
   getReducer: TGetStoreReducer<Action, Context>;
+  /**
+   * Recompute the derived value for the committed server content. Derived is
+   * always on — `getDerive` and `derivedFileName` are required, on the client
+   * and server alike, and the same `derive` must run on both sides (see README).
+   */
+  getDerive: TGetDerive;
   maxStoredErrors: number;
+  /** OPFS file holding the engine bookkeeping (clientId, hlc, outbox, …). */
+  metaFileName: string;
   /** Called in-process with every database content change (same content the
    * main thread receives), once with the initial content on startup. Only
    * valid for the duration of the call — copy it if it must be retained
    * beyond the next emission. */
   onDatabase?: (content: Uint8Array) => void;
+  /** Called in-process with every derived change (same bytes the main thread
+   * receives via `subscribeDerived`), once with the initial derived on
+   * startup. Only valid for the duration of the call. */
+  onDerived?: (derived: Uint8Array) => void;
   opfsLockName: string;
   reconnectBaseDelay?: number;
   reconnectMaxDelay?: number;
@@ -62,21 +75,36 @@ export interface TWorkerEngineParams<Action, Context> {
   sanitizeContext: TSanitizeContext<Context>;
   restoreContext: TRestoreContext<Context>;
   sendLockName: string;
-  stateFileName: string;
   syncPath: (clientId: string) => string;
+  /** OPFS file holding the derived value (always configured — derived is always on). */
+  derivedFileName: string;
+  /**
+   * Escape hatch for large derived values. Derived is always computed and the
+   * in-process `onDerived` hook always fires. By default every `Ready`/
+   * `Database` message also carries the derived bytes to the main thread
+   * (each emission costs a `slice()` copy; the transfer itself is O(1) —
+   * zero-copy). Set `emitDerived: false` to skip that per-snapshot copy:
+   * only the initial derived (in `Ready`) is delivered, later snapshots
+   * arrive without an updated derived. The main thread's `getDerived()` is
+   * never null — it just keeps the last delivered value.
+   */
+  emitDerived?: boolean;
 }
 
 export function createWorkerEngine<Action, Context>({
   emit,
   close,
   crossTabDispatchChannelName,
-  dbFileName,
+  stateFileName,
   dispatchPath,
   getContext,
   getContextTimeoutMs,
   getReducer,
+  getDerive,
   maxStoredErrors,
+  metaFileName,
   onDatabase,
+  onDerived,
   opfsLockName,
   reconnectBaseDelay,
   reconnectMaxDelay,
@@ -84,12 +112,13 @@ export function createWorkerEngine<Action, Context>({
   restoreContext,
   sanitizeContext,
   sendLockName,
-  stateFileName,
   syncPath,
+  derivedFileName,
+  emitDerived = true,
 }: TWorkerEngineParams<Action, Context>): TWorkerEngine {
   const syncController = new AbortController();
 
-  let debugState: TDebugState = { pendingCount: 0, errors: [] };
+  let debugState: TDebugState = { outboxCount: 0, errors: [] };
   let sessionExpired = false;
 
   // Incoming (main→worker) messages. Before `main()` has built the store,
@@ -136,10 +165,10 @@ export function createWorkerEngine<Action, Context>({
 
   function getTransferable(message: TWorkerOutMessage): Transferable[] {
     if (message.kind === "Ready") {
-      return [message.database];
+      return [message.database, ...(message.derived ? [message.derived] : [])];
     }
     if (message.kind === "Database") {
-      return [message.content];
+      return [message.content, ...(message.derived ? [message.derived] : [])];
     }
     return [];
   }
@@ -161,7 +190,7 @@ export function createWorkerEngine<Action, Context>({
   }
 
   async function handleError(
-    opfsClient: OpfsClient | null,
+    store: Store | null,
     kind: StoredError["kind"],
     error: unknown,
     dedupKey?: string,
@@ -170,8 +199,8 @@ export function createWorkerEngine<Action, Context>({
       error instanceof Error ? error.message.split("\n")[0] : String(error).split("\n")[0];
     const stack = error instanceof Error ? (error.stack ?? String(error)) : String(error);
     try {
-      if (opfsClient) {
-        const state = await opfsClient.addError(kind, message, stack, dedupKey ?? message);
+      if (store) {
+        const state = await store.addError(kind, message, stack, dedupKey ?? message);
         updateDebugState(state);
       }
     } catch (err) {
@@ -182,17 +211,18 @@ export function createWorkerEngine<Action, Context>({
   async function main() {
     const initState = await init<Action, Context>({
       getReducer,
+      getDerive,
       onNoContextError: () => {
         handleError(null, "Startup", "No context available");
       },
       onUnauthorized: handleSessionExpired,
       getContext,
       sanitizeContext,
-      dbFileName,
       stateFileName,
-      maxStoredErrors,
-      opfsLockName,
+      metaFileName,
       getContextTimeoutMs,
+      opfsLockName,
+      derivedFileName,
     });
     if (!initState || syncController.signal.aborted) {
       return;
@@ -200,19 +230,21 @@ export function createWorkerEngine<Action, Context>({
 
     const {
       reducer,
+      derive: loadedDerive,
       database,
       context: sanitizedContext,
-      opfsClient,
+      storage,
       clientId,
-      pending,
+      outbox,
       errors,
       serverVersion,
+      derived: initialDerived,
     } = initState;
 
     const context = restoreContext(sanitizedContext._context);
 
-    // Initialize debug state from the loaded OPFS state
-    debugState = { pendingCount: pending.length, errors };
+    // Initialize debug state from the loaded OPFS bookkeeping
+    debugState = { outboxCount: outbox.length, errors };
 
     const apiClient = createApiClient({
       syncPath,
@@ -224,23 +256,29 @@ export function createWorkerEngine<Action, Context>({
 
     const store = createStore<Action, Context>({
       context,
-      initialDatabase: database,
-      initialPending: pending,
+      storage,
+      opfsLockName,
+      maxStoredErrors,
+      initialState: database,
+      initialOutbox: outbox,
       initialServerVersion: serverVersion,
-      opfsClient,
+      initialDerived,
       restoreAction,
-      onDatabase: (content: Uint8Array, dispatchedId?: number) => {
-        // In-process hook first; the message path slices before transferring,
-        // so the hook's reference is never detached.
+      derive: loadedDerive,
+      onState: (content: Uint8Array, derivedContent: Uint8Array, dispatchedId?: number) => {
+        // In-process hooks first; the message path slices before transferring,
+        // so the hooks' references are never detached.
         onDatabase?.(content);
+        onDerived?.(derivedContent);
         sendMessage({
           kind: "Database",
           content: content.slice().buffer,
+          ...(emitDerived ? { derived: derivedContent.slice().buffer } : {}),
           ...(dispatchedId === undefined ? {} : { dispatchedId }),
         });
       },
-      onStateChange: (pendingCount: number) => {
-        debugState = { ...debugState, pendingCount };
+      onStateChange: (outboxCount: number) => {
+        debugState = { ...debugState, outboxCount };
         sendDebugState();
       },
       reducer,
@@ -248,16 +286,16 @@ export function createWorkerEngine<Action, Context>({
 
     const sender = createSender({
       apiClient,
-      opfsClient,
       clientId,
+      store,
       signal: syncController.signal,
       sendLockName,
-      onExhausted: (pending) => {
+      onExhausted: (action) => {
         handleError(
-          opfsClient,
+          store,
           "Send",
-          `Failed to send action after retries (ts: ${pending.ts})`,
-          pending.ts,
+          `Failed to send action after retries (ts: ${action.ts})`,
+          action.ts,
         );
       },
       onUnauthorized: handleSessionExpired,
@@ -269,19 +307,18 @@ export function createWorkerEngine<Action, Context>({
       store,
       apiClient,
       onPatchError: (version, error) => {
-        handleError(opfsClient, "Sync", error, version);
+        handleError(store, "Sync", error, version);
       },
     });
 
     const broadcastChannel = new BroadcastChannel(crossTabDispatchChannelName);
 
     const dispatcher = createDispatcher({
-      opfsClient,
-      signal: syncController.signal,
-      sender,
       store,
+      sender,
+      signal: syncController.signal,
       onDispatchError: (error: unknown) => {
-        handleError(opfsClient, "Dispatch", error);
+        handleError(store, "Dispatch", error);
       },
       onDispatched: () => {
         broadcastChannel.postMessage("dispatch");
@@ -316,21 +353,21 @@ export function createWorkerEngine<Action, Context>({
         return;
       }
       if (message.kind === "ClearError") {
-        opfsClient.clearError(message.id).then(updateDebugState);
+        store.clearError(message.id).then(updateDebugState);
         return;
       }
       if (message.kind === "ClearAllErrors") {
-        opfsClient.clearAllErrors().then(updateDebugState);
+        store.clearAllErrors().then(updateDebugState);
         return;
       }
       if (message.kind === "Refresh") {
-        opfsClient.refresh().then(() => {
+        store.refresh().then(() => {
           sendMessage({ kind: "Reload" });
         });
         return;
       }
       if (message.kind === "ForceRefresh") {
-        opfsClient.forceRefresh().then(() => {
+        store.forceRefresh().then(() => {
           sendMessage({ kind: "Reload" });
         });
         return;
@@ -340,14 +377,19 @@ export function createWorkerEngine<Action, Context>({
       // listeners.
     };
 
-    // Emit the initial content to the in-process hook (the store's onDatabase
+    // Emit the initial content to the in-process hooks (the store's onState
     // only fires on later changes), mirroring the Ready message below.
-    onDatabase?.(store.getLocalContent());
+    const readyDerived = store.getDerived();
+    onDatabase?.(store.getState());
+    onDerived?.(readyDerived);
 
+    // Ready always carries the initial derived, so the main thread's
+    // `getDerived()` is non-null even when `emitDerived` is false.
     sendMessage({
       kind: "Ready",
       context: sanitizedContext,
-      database: store.getLocalContent().slice().buffer,
+      database: store.getState().slice().buffer,
+      derived: readyDerived.slice().buffer,
     });
 
     // Send initial debug state to the main thread

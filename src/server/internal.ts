@@ -1,8 +1,9 @@
+export { createDerivedStore, type DerivedStoreParams, type TDerivedStore } from "./derivedStore.ts";
 export {
-  createFileStore,
-  type FileStoreParams,
-  type TFileStore,
-  type TFileStoreEvent,
+  createStateStore,
+  type StateStoreParams,
+  type TStateStore,
+  type TStateStoreEvent,
   type TStoreUpdateContext,
-} from "./fileStore.ts";
+} from "./stateStore.ts";
 export { createStateDb, type TStateDb, type TStateDbParams } from "./stateDb.ts";

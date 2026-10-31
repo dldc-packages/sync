@@ -169,6 +169,11 @@ describe("E2E: stress test - concurrent add/delete across multiple clients", () 
     }
 
     try {
+      // Fresh contexts start from an empty local file and sync down async, so
+      // wait for convergence before asserting (like the sibling tests).
+      const expected = NUM_CLIENTS * (TODOS_PER_CLIENT - Math.floor(TODOS_PER_CLIENT / 2));
+      await waitForConvergence(pages, expected);
+
       const allTexts = await Promise.all(pages.map((p) => getTodoTexts(p)));
       const sorted = allTexts.map((t) => [...t].sort());
       const first = JSON.stringify(sorted[0]);

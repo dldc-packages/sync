@@ -1,0 +1,364 @@
+import { describe, expect, it } from "vitest";
+import { diff, signature } from "@dldc/librsync";
+import type { TDerive, TStoreReducer } from "../shared/types.ts";
+import type { Bookkeeping, SanitizedOutboxAction, Storage } from "./storage.ts";
+import { createStore } from "./store.ts";
+
+type Action = { kind: "add"; id: string } | { kind: "toggle"; id: string };
+type Context = Record<never, never>;
+
+interface TestState {
+  items: { id: string; done: boolean }[];
+}
+interface TestDerived {
+  done: number;
+}
+
+const encode = <T>(value: T): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
+const decode = <T>(bytes: Uint8Array, fallback: T): T => {
+  if (bytes.byteLength === 0) return fallback;
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
+};
+const decodeDone = (bytes: Uint8Array): number => decode<TestDerived>(bytes, { done: 0 }).done;
+
+/** Derived-aware reducer: maintains a `{ done }` counter next to the state. */
+const derivedReducer: TStoreReducer<Action, Context> = (file, _ctx, action, currentDerived) => {
+  const state = decode<TestState>(file, { items: [] });
+  const derived = decode<TestDerived>(currentDerived, { done: 0 });
+  if (action.kind === "add") {
+    state.items.push({ id: action.id, done: false });
+  } else {
+    const item = state.items.find((i) => i.id === action.id);
+    if (item) {
+      item.done = !item.done;
+      derived.done += item.done ? 1 : -1;
+    }
+  }
+  return { state: encode(state), derived: encode(derived) };
+};
+
+/** Recompute the derived counter from the state (ignores `prevDerived`). */
+const rebuildDerive: TDerive = (file) => {
+  const state = decode<TestState>(file, { items: [] });
+  return encode<TestDerived>({ done: state.items.filter((i) => i.done).length });
+};
+
+/** Non-derived-aware reducer: returns only the next state. */
+const plainReducer: TStoreReducer<Action, Context> = (file, _ctx, action) => {
+  const state = decode<TestState>(file, { items: [] });
+  if (action.kind === "add") {
+    state.items.push({ id: action.id, done: false });
+  } else {
+    const item = state.items.find((i) => i.id === action.id);
+    if (item) item.done = !item.done;
+  }
+  return encode(state);
+};
+
+const EMPTY = new Uint8Array(0);
+
+// A lock that just runs the function — the store's lock ownership is what we
+// exercise; the mutual exclusion across tabs is `navigator.locks`, not testable here.
+const passThroughLock = <T>(_name: string, fn: () => Promise<T>): Promise<T> => fn();
+
+const sanitizedOf = (action: Action, n: number): SanitizedOutboxAction => ({
+  ts: `ts-${n}`,
+  action: { _action: action },
+  sent: false,
+});
+
+/** Wrap a plain action in the sanitized wire form the store dispatches. */
+const dispatchSanitized = (action: Action) => ({ _action: action });
+
+/** In-memory `Storage` fake: the single source of truth for the store under test. */
+function createStorageMock(initial: {
+  serverVersion?: string | null;
+  db?: Uint8Array;
+  derived?: Uint8Array;
+  outbox?: SanitizedOutboxAction[];
+}) {
+  let meta: Bookkeeping = {
+    clientId: "client",
+    hlc: null,
+    outbox: initial.outbox ?? [],
+    errors: [],
+    serverVersion: initial.serverVersion ?? null,
+    context: null,
+  };
+  let db = initial.db ?? EMPTY;
+  let derived = initial.derived ?? EMPTY;
+  const derivedWrites: Uint8Array[] = [];
+
+  const storage: Storage = {
+    readMeta: async () => meta,
+    writeMeta: async (m) => {
+      meta = m;
+    },
+    readDb: async () => db,
+    writeDb: async (d) => {
+      db = d;
+    },
+    readDerived: async () => derived,
+    writeDerived: async (d) => {
+      derivedWrites.push(d);
+      derived = d;
+    },
+    deleteDb: async () => {
+      db = EMPTY;
+    },
+  };
+
+  return {
+    storage,
+    derivedWrites,
+    get meta() {
+      return meta;
+    },
+    get db() {
+      return db;
+    },
+    /** Simulate another tab having committed a new server content + version. */
+    setServerContent: async (
+      content: Uint8Array,
+      version: string,
+      outbox: SanitizedOutboxAction[],
+    ) => {
+      db = content;
+      meta.serverVersion = version;
+      meta.outbox = outbox;
+    },
+  };
+}
+
+function makeStore(opts: {
+  initialDatabase?: Uint8Array;
+  initialOutbox?: SanitizedOutboxAction[];
+  derive?: TDerive;
+  reducer?: TStoreReducer<Action, Context>;
+  serverVersion?: string;
+}) {
+  const serverVersion = opts.serverVersion ?? "s0";
+  const initialDatabase = opts.initialDatabase ?? EMPTY;
+  const fake = createStorageMock({ serverVersion, db: initialDatabase });
+  const snapshots: Array<{ content: Uint8Array; derived: Uint8Array; dispatchId?: number }> = [];
+  const store = createStore<Action, Context>({
+    context: {},
+    initialServerVersion: serverVersion,
+    initialOutbox: opts.initialOutbox ?? [],
+    initialState: initialDatabase,
+    initialDerived: EMPTY,
+    storage: fake.storage,
+    opfsLockName: "test-lock",
+    lock: passThroughLock,
+    maxStoredErrors: 20,
+    restoreAction: (data) => data as Action,
+    reducer: opts.reducer ?? derivedReducer,
+    derive: opts.derive ?? rebuildDerive,
+    onState: (content, derived, dispatchId) => {
+      snapshots.push({ content, derived, dispatchId });
+    },
+    onStateChange: () => {},
+  });
+  // NOTE: return live getters — spreading `fake` would snapshot the getter
+  // values (e.g. `db`) at construction time.
+  return {
+    store,
+    storage: fake.storage,
+    derivedWrites: fake.derivedWrites,
+    setServerContent: fake.setServerContent,
+    get db() {
+      return fake.db;
+    },
+    get meta() {
+      return fake.meta;
+    },
+    snapshots,
+  };
+}
+
+describe("createStore (owns the OPFS lock)", () => {
+  it("derives the initial derived from the database and replays the outbox on top", () => {
+    const initialDatabase = encode<TestState>({ items: [{ id: "a", done: true }] });
+    const { store } = makeStore({
+      initialDatabase,
+      initialOutbox: [sanitizedOf({ kind: "add", id: "b" }, 1)],
+      derive: rebuildDerive,
+    });
+
+    // derived = server derived (1 done) with outbox replayed (add b: no change)
+    expect(decodeDone(store.getDerived())).toBe(1);
+    // local content includes the outbox add
+    const local = decode<TestState>(store.getState(), { items: [] });
+    expect(local.items.some((i) => i.id === "b")).toBe(true);
+    expect(store.getServerState()).toBe(initialDatabase);
+  });
+
+  it("updates derived optimistically on dispatch and never persists", async () => {
+    const { store, derivedWrites, snapshots } = makeStore({ derive: rebuildDerive });
+
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
+    await store.dispatch(dispatchSanitized({ kind: "toggle", id: "a" }));
+
+    expect(decodeDone(store.getDerived())).toBe(1); // a added + toggled → done
+    const last = snapshots.at(-1)!;
+    expect(decodeDone(last.derived!)).toBe(1);
+    // no server content change → nothing is persisted
+    expect(derivedWrites).toHaveLength(0);
+  });
+
+  it("persists the outbox on dispatch and exposes the sent lifecycle", async () => {
+    const { store, meta } = makeStore({});
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
+
+    expect(meta.outbox).toHaveLength(1);
+    expect(meta.outbox[0].sent).toBe(false);
+
+    const unsent = await store.getNextUnsent();
+    expect(unsent?.ts).toBe(meta.outbox[0].ts);
+
+    await store.markOutboxAsSent(unsent!.ts);
+    expect(meta.outbox[0].sent).toBe(true);
+    expect(await store.getNextUnsent()).toBeNull();
+  });
+
+  it("applies a real rsync patch, commits the content and persists derived", async () => {
+    const serverOld = encode<TestState>({ items: [] });
+    const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
+    const { store, meta, derivedWrites, storage } = makeStore({
+      initialDatabase: serverOld,
+      serverVersion: "s0",
+      derive: rebuildDerive,
+    });
+
+    // optimistic add + toggle (outbox, never persisted)
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
+    await store.dispatch(dispatchSanitized({ kind: "toggle", id: "a" }));
+    expect(decodeDone(store.getDerived())).toBe(1);
+    expect(derivedWrites).toHaveLength(0);
+
+    // server applies both actions and sends a real rsync patch; the
+    // clientLastApplied acknowledges both local actions so they leave the outbox
+    const lastTs = meta.outbox[1].ts;
+    const patch = diff(signature(serverOld), serverNew);
+    await store.applyPatch("v1", patch, lastTs);
+
+    // the OPFS db is patched into the new content
+    expect((await storage.readDb()).toString()).toBe(serverNew.toString());
+    expect(store.getServerState().toString()).toBe(serverNew.toString());
+    expect(meta.serverVersion).toBe("v1");
+    expect(meta.outbox).toHaveLength(0);
+    // derived re-derived from the new server content and persisted
+    expect(decodeDone(store.getDerived())).toBe(1);
+    expect(derivedWrites).toHaveLength(1);
+    expect(decodeDone(derivedWrites[0])).toBe(1);
+  });
+
+  it("drops acked outbox actions when the server acknowledges them", async () => {
+    const serverOld = encode<TestState>({ items: [] });
+    const { store, meta } = makeStore({ initialDatabase: serverOld, serverVersion: "s0" });
+
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
+    await store.dispatch(dispatchSanitized({ kind: "toggle", id: "a" }));
+    expect(meta.outbox).toHaveLength(2);
+
+    // UpToDate with clientLastApplied covering both actions
+    await store.applyPatch("v1", null, meta.outbox[1].ts);
+    expect(meta.outbox).toHaveLength(0);
+  });
+
+  it("dedups a patch version another tab already handled", async () => {
+    const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
+    // The store starts having only fetched s0, but another tab already
+    // committed v1 to disk (db + meta).
+    const fake = createStorageMock({ db: serverNew, serverVersion: "v1", outbox: [] });
+    const store = createStore<Action, Context>({
+      context: {},
+      initialServerVersion: "s0",
+      initialOutbox: [],
+      initialState: EMPTY,
+      initialDerived: EMPTY,
+      storage: fake.storage,
+      opfsLockName: "test-lock",
+      lock: passThroughLock,
+      maxStoredErrors: 20,
+      restoreAction: (data) => data as Action,
+      reducer: derivedReducer,
+      derive: rebuildDerive,
+      onState: () => {},
+      onStateChange: () => {},
+    });
+
+    // Applying the "v1" patch on top of a meta that already points at v1 hits
+    // the dedup path: read the fresh db, re-derive + persist, no double-apply.
+    await store.applyPatch("v1", null, null);
+    expect(store.getServerState().toString()).toBe(serverNew.toString());
+    expect(fake.derivedWrites).toHaveLength(1);
+    expect(decodeDone(fake.derivedWrites[0])).toBe(1);
+  });
+
+  it("keeps the derived from derive when the reducer is not derived-aware", async () => {
+    const { store } = makeStore({ derive: rebuildDerive, reducer: plainReducer });
+
+    await store.dispatch(dispatchSanitized({ kind: "toggle", id: "a" }));
+
+    // The plain reducer never updates derived, so it stays at derive(serverContent) = 0
+    expect(decodeDone(store.getDerived())).toBe(0);
+  });
+
+  it("always computes a derived, even when the reducer is not derived-aware", async () => {
+    const serverOld = encode<TestState>({ items: [] });
+    const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
+    const { store, derivedWrites, storage } = makeStore({
+      initialDatabase: serverOld,
+      derive: rebuildDerive,
+      reducer: plainReducer,
+    });
+
+    // derived is non-null from boot
+    expect(store.getDerived()).toBeInstanceOf(Uint8Array);
+    expect(decodeDone(store.getDerived())).toBe(0);
+
+    // optimistic dispatch: the plain reducer doesn't touch derived, so it stays
+    // at derive(serverContent) — still non-null, and never persisted (optimistic)
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "a" }));
+    expect(store.getDerived()).toBeInstanceOf(Uint8Array);
+    expect(decodeDone(store.getDerived())).toBe(0);
+    expect(derivedWrites).toHaveLength(0);
+
+    // a real patch updates the db and recommits the derived for the new content
+    const patch = diff(signature(serverOld), serverNew);
+    await store.applyPatch("v1", patch, null);
+    expect((await storage.readDb()).toString()).toBe(serverNew.toString());
+    expect(decodeDone(store.getDerived())).toBe(1);
+    expect(derivedWrites).toHaveLength(1);
+    expect(decodeDone(derivedWrites[0])).toBe(1);
+  });
+
+  it("picks up another tab's committed content on refreshFromOpfs", async () => {
+    const serverNew = encode<TestState>({ items: [{ id: "a", done: true }] });
+    const { store, derivedWrites, setServerContent, meta } = makeStore({
+      serverVersion: "s0",
+      derive: rebuildDerive,
+    });
+
+    // this tab dispatchs an optimistic add; the server hasn't changed yet
+    await store.dispatch(dispatchSanitized({ kind: "add", id: "b" }));
+    expect(store.getServerState().byteLength).toBe(0);
+    expect(derivedWrites).toHaveLength(0);
+
+    // another tab applies a patch: db + version on the shared files change,
+    // but this tab's unacked actions stay in the shared outbox
+    await setServerContent(serverNew, "v1", [...meta.outbox]);
+
+    // the broadcast-channel wake drives the other tabs to refreshFromOpfs
+    await store.refreshFromOpfs();
+
+    expect(store.getServerState().toString()).toBe(serverNew.toString());
+    // the locally outboxed add b is still replayed on top of the new content
+    const local = decode<TestState>(store.getState(), { items: [] });
+    expect(local.items.find((i) => i.id === "b")).toBeTruthy();
+    expect(decodeDone(store.getDerived())).toBe(1);
+    // derived for the new server content was computed and persisted
+    expect(derivedWrites.length).toBeGreaterThan(0);
+  });
+});

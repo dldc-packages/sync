@@ -3,13 +3,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { createStore } from "../../src/server.ts";
-import { reducer, restoreAction } from "./shared.ts";
+import { derive, reducer, restoreAction } from "./shared.ts";
 
 /**
  * The todo server.
  *
  * `createStore` wires up:
- *  - a file store backed by `filePath` (the JSON todo file) — the data that the
+ *  - a state store backed by `stateFilePath` (the JSON todo file) — the data that the
  *    reducer reads/writes, and the source of truth synced to clients via rsync
  *  - a state database (SQLite, internal to the lib) that tracks per-client
  *    last-applied timestamps + the file version across restarts
@@ -27,10 +27,12 @@ const DATA_DIR = process.env.DATA_DIR ?? "./.data";
 const PORT = Number(process.env.PORT ?? 3000);
 
 const store = await createStore({
-  stateDatabasePath: `${DATA_DIR}/state.sqlite`,
-  filePath: `${DATA_DIR}/todos.json`,
-  getReducer: () => Promise.resolve(reducer),
+  metaFilePath: `${DATA_DIR}/state.sqlite`,
+  stateFilePath: `${DATA_DIR}/todos.json`,
+  derivedFilePath: `${DATA_DIR}/todos.derived`,
   restoreAction,
+  getReducer: () => Promise.resolve(reducer),
+  getDerive: () => Promise.resolve(derive),
 });
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {

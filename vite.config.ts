@@ -43,7 +43,6 @@ export default defineConfig({
       typeCheck: true,
     },
     rules: {
-      // `any` was the only excluded rule in the previous Deno lint config.
       "no-explicit-any": "off",
     },
   },

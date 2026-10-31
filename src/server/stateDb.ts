@@ -20,10 +20,10 @@ export interface TStateDb {
 }
 
 export interface TStateDbParams {
-  stateDatabasePath: string;
+  metaFilePath: string;
 }
 
-export async function createStateDb({ stateDatabasePath }: TStateDbParams): Promise<TStateDb> {
+export async function createStateDb({ metaFilePath }: TStateDbParams): Promise<TStateDb> {
   const MAIN_DB_VERSION_KEY = "mainDbVersion";
 
   const stateSchemaDef = Schema.declare({
@@ -47,20 +47,20 @@ export async function createStateDb({ stateDatabasePath }: TStateDbParams): Prom
   const stateSchema = stateMigration.schema;
 
   // Ensure the parent directory exists (native SQLite won't create it).
-  const dir = dirname(stateDatabasePath);
+  const dir = dirname(metaFilePath);
   mkdirSync(dir, { recursive: true });
 
   // Open the file-backed DB. better-sqlite3 persists writes directly to disk.
-  const initDb = new Database(stateDatabasePath);
+  const initDb = new Database(metaFilePath);
   const [migratedDb, shouldPersist] = await stateMigration.apply(initDb);
 
   let db = migratedDb;
   if (shouldPersist) {
     // Migration produced an in-memory DB (createDatabase returns ":memory:").
     // Persist it back to the file by backing up into a fresh on-disk DB.
-    await migratedDb.backup(stateDatabasePath);
+    await migratedDb.backup(metaFilePath);
     migratedDb.close();
-    db = new Database(stateDatabasePath);
+    db = new Database(metaFilePath);
   }
 
   return {

@@ -1,19 +1,20 @@
 import type { ApiClient } from "./api.ts";
 import { UnauthorizedError } from "./errors.ts";
 import { withLock } from "./lock.ts";
-import type { OpfsClient, SanitizedPendingAction } from "./opfs.ts";
+import type { SanitizedOutboxAction } from "./storage.ts";
+import type { Store } from "./store.ts";
 
 export interface Sender {
-  /** Wake up the send loop (e.g. after a dispatch added to pending). */
+  /** Wake up the send loop (e.g. after a dispatch added to the outbox). */
   wake(): void;
 }
 
 export interface SenderParams {
   apiClient: ApiClient;
-  opfsClient: OpfsClient;
+  store: Store;
   clientId: string;
   signal: AbortSignal;
-  onExhausted: (sanitizedPending: SanitizedPendingAction) => void;
+  onExhausted: (sanitizedOutboxAction: SanitizedOutboxAction) => void;
   onUnauthorized?: () => void;
   sendLockName: string;
 }
@@ -23,18 +24,19 @@ const BACKOFF_MAX_DELAY = 30_000;
 const BACKOFF_MAX_ATTEMPTS = 10;
 
 /**
- * A self-sufficient loop that sends pending actions to the server one by one
+ * A self-sufficient loop that sends outbox actions to the server one by one
  * under the send lock. Runs independently from the sync loop.
  *
  * Each iteration:
  * - Acquire send lock
- * - Read state from OPFS, find first unsent pending action
+ * - Ask the store for the first unsent outbox action (from OPFS, under the
+ *   OPFS lock which the store owns)
  * - If none, stop (the loop will be restarted by `wake()`)
  * - Send it via HTTP with retry + exponential backoff (inside the lock)
- * - On success: mark as sent in OPFS, continue to next
+ * - On success: mark as sent in OPFS (via the store), continue to next
  * - On exhaustion (max attempts): skip this action, log, continue to next
  *
- * The `sent` boolean lives on the PendingAction in OPFS, so it's shared across
+ * The `sent` boolean lives on the outbox action in OPFS, so it's shared across
  * tabs — no double-sending. It persists across restarts: if an action was sent
  * (HTTP 200) but not yet acked by sync, the sender won't re-send it on restart.
  * The server's `updateClientLastApplied` dedups in case of re-send anyway.
@@ -44,13 +46,13 @@ export function createSender({
   clientId,
   onExhausted,
   onUnauthorized,
-  opfsClient,
+  store,
   signal,
   sendLockName,
 }: SenderParams): Sender {
   let loopRunning = false;
 
-  // Start immediately (sends any pending from a previous session).
+  // Start immediately (sends any outbox action from a previous session).
   wake();
 
   return { wake };
@@ -72,24 +74,24 @@ export function createSender({
   }
 
   /**
-   * Send a single unsent pending action with retry + exponential backoff.
+   * Send a single unsent outbox action with retry + exponential backoff.
    * Must be called inside the send lock. Returns "sent" or "none" (no unsent
-   * pending). Retries up to BACKOFF_MAX_ATTEMPTS times on failure, then logs and
-   * returns "sent" to let the loop move on to the next action.
+   * outbox action). Retries up to BACKOFF_MAX_ATTEMPTS times on failure, then
+   * logs and returns "sent" to let the loop move on to the next action.
    */
   async function sendWithRetry(
     clientId: string,
     signal: AbortSignal,
-    onExhausted: (sanitizedPending: SanitizedPendingAction) => void,
+    onExhausted: (sanitizedOutboxAction: SanitizedOutboxAction) => void,
   ): Promise<{ shouldContinue: boolean }> {
-    const sanitizedPending = await opfsClient.getNextUnsentPending();
-    if (sanitizedPending === null) return { shouldContinue: false };
+    const sanitized = await store.getNextUnsent();
+    if (sanitized === null) return { shouldContinue: false };
 
     for (let attempt = 0; attempt < BACKOFF_MAX_ATTEMPTS; attempt++) {
       if (signal.aborted) return { shouldContinue: false };
       try {
-        await apiClient.dispatchAction(clientId, sanitizedPending.action, sanitizedPending.ts);
-        await opfsClient.markPendingAsSent(sanitizedPending.ts);
+        await apiClient.dispatchAction(clientId, sanitized.action, sanitized.ts);
+        await store.markOutboxAsSent(sanitized.ts);
         return { shouldContinue: true };
       } catch (err) {
         if (err instanceof UnauthorizedError) {
@@ -102,8 +104,8 @@ export function createSender({
         }
       }
     }
-    console.error("Send exhausted retries, skipping:", sanitizedPending.ts);
-    onExhausted(sanitizedPending);
+    console.error("Send exhausted retries, skipping:", sanitized.ts);
+    onExhausted(sanitized);
     return { shouldContinue: true };
   }
 

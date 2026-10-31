@@ -1,41 +1,47 @@
 import type {
+  TDerive,
   TGetContext,
+  TGetDerive,
   TGetStoreReducer,
   TSanitizeContext,
   TStoreReducer,
 } from "../shared/types.ts";
 import { UnauthorizedError } from "./errors.ts";
+import { loadInitial, saveContext } from "./store.ts";
 import {
-  createOpfsClient,
-  type OpfsClient,
+  createStorage,
   type SanitizedContext,
-  type SanitizedPendingAction,
+  type SanitizedOutboxAction,
+  type Storage,
   type StoredError,
-} from "./opfs.ts";
+} from "./storage.ts";
 
 /** Values computed once during `start()` and never reassigned. */
-interface EngineInit<Action, Context> {
+export interface EngineInit<Action, Context> {
   reducer: TStoreReducer<Action, Context>;
+  derive: TDerive;
   context: SanitizedContext;
   clientId: string;
-  pending: SanitizedPendingAction[];
+  outbox: SanitizedOutboxAction[];
   serverVersion: string | null;
   errors: StoredError[];
   database: Uint8Array;
-  opfsClient: OpfsClient;
+  derived: Uint8Array;
+  storage: Storage;
 }
 
 export interface InitParams<Action, Context> {
   getReducer: TGetStoreReducer<Action, Context>;
+  getDerive: TGetDerive;
   onNoContextError: () => void;
   onUnauthorized: () => void;
   getContext: TGetContext<Context>;
   sanitizeContext: TSanitizeContext<Context>;
-  dbFileName: string;
   stateFileName: string;
-  maxStoredErrors: number;
-  opfsLockName: string;
+  metaFileName: string;
   getContextTimeoutMs: number;
+  opfsLockName: string;
+  derivedFileName: string;
 }
 
 export async function init<Action, Context>({
@@ -43,53 +49,59 @@ export async function init<Action, Context>({
   onUnauthorized,
   getContext,
   getReducer,
+  getDerive,
   sanitizeContext,
-  dbFileName,
   stateFileName,
-  maxStoredErrors,
-  opfsLockName,
+  metaFileName,
   getContextTimeoutMs,
+  opfsLockName,
+  derivedFileName,
 }: InitParams<Action, Context>): Promise<EngineInit<Action, Context> | null> {
-  const opfsClient = createOpfsClient({
-    dbFileName,
+  const storage = createStorage({
     stateFileName,
-    maxStoredErrors,
-    opfsLockName,
+    metaFileName,
+    derivedFileName,
   });
 
   // In parallel
   // - load the reducer
+  // - load the derive function
   // - restore existing state from opfs + restore or fetch context
-  const [init, reducer] = await Promise.all([initOpfsAndRestoreContext(), getReducer()]);
+  const [initState, reducer, derive] = await Promise.all([
+    initOpfsAndRestoreContext(),
+    getReducer(),
+    getDerive(),
+  ]);
 
-  if (!init) {
+  if (!initState) {
     return null;
   }
 
   return {
-    ...init,
+    ...initState,
     reducer,
-    opfsClient,
+    derive,
+    storage,
   };
 
   async function initOpfsAndRestoreContext(): Promise<Omit<
     EngineInit<Action, Context>,
-    "reducer" | "opfsClient"
+    "reducer" | "derive" | "storage"
   > | null> {
-    // Load persisted state + DB from OPFS (under the lock) — load BEFORE getMe
-    // so we can fall back to the saved context if the network is unavailable.
+    // Load persisted state + DB from OPFS (under the lock) — load BEFORE
+    // getMe so we can fall back to the saved context if the network is
+    // unavailable. The store owns this lock; the boot read lives in store.ts.
     const {
-      context: initContext,
+      context: savedContext,
       database,
       clientId,
-      pending,
+      outbox,
       errors,
       serverVersion,
-    } = await opfsClient.loadInitial();
+      derived,
+    } = await loadInitial(storage, opfsLockName);
 
-    const savedContext = initContext;
-
-    let context: SanitizedContext | null = null;
+    let context = savedContext;
 
     if (navigator.onLine) {
       try {
@@ -103,9 +115,6 @@ export async function init<Action, Context>({
         console.warn("[init] getMe failed, falling back to saved context:", err);
         context = savedContext;
       }
-    } else {
-      // Offline — use the saved context directly.
-      context = savedContext;
     }
 
     if (context === null) {
@@ -116,10 +125,10 @@ export async function init<Action, Context>({
 
     // Persist the fresh context from the server so it's available on next offline start.
     if (context !== savedContext) {
-      await opfsClient.saveContext(context);
+      await saveContext(storage, opfsLockName, context);
     }
 
-    return { context, database, clientId, pending, errors, serverVersion };
+    return { context, database, clientId, outbox, errors, serverVersion, derived };
   }
 
   /** Calls getMe with an abort timeout so we don't block startup on a slow network. */

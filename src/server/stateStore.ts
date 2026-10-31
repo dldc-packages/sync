@@ -7,33 +7,33 @@ export interface TStoreUpdateContext {
   clientLastApplied: string | null;
 }
 
-export interface TFileStoreEvent {
+export interface TStateStoreEvent {
   patch: Uint8Array;
   version: string; // unique ID for this DB version
   clientId: string | null; // client that triggered this update, null if non-client
   clientLastApplied: string | null; // HLC ts applied by the triggering client
 }
 
-export interface TFileStore {
+export interface TStateStore {
   getCurrent(): Uint8Array;
   compare(data: Uint8Array): { patch: Uint8Array | null; version: string };
-  subscribe(callback: TSubscriptionCallback<TFileStoreEvent>): TUnsubscribe;
+  subscribe(callback: TSubscriptionCallback<TStateStoreEvent>): TUnsubscribe;
   update(updater: (current: Uint8Array) => Uint8Array, context: TStoreUpdateContext): void;
 }
 
-export interface FileStoreParams {
+export interface StateStoreParams {
   getDbVersion: () => string | null;
   setDbVersion: (version: string) => void;
-  filePath: string;
+  stateFilePath: string;
 }
 
-export function createFileStore({
+export function createStateStore({
   getDbVersion,
   setDbVersion,
-  filePath,
-}: FileStoreParams): TFileStore {
-  const subscriptions = createSubscription<TFileStoreEvent>();
-  let content: Uint8Array = readFileOrEmpty(filePath);
+  stateFilePath,
+}: StateStoreParams): TStateStore {
+  const subscriptions = createSubscription<TStateStoreEvent>();
+  let content: Uint8Array = readFileOrEmpty(stateFilePath);
   // Read persisted version from the state DB (survives restarts). If none
   // (fresh state DB), generate one and persist it so the version is stable
   // across restarts as long as the DB content doesn't change.
@@ -81,7 +81,7 @@ export function createFileStore({
     // unsafe: a crash between would give new content + old version, causing
     // clients to skip the patch (version dedup) and miss the update.
     setDbVersion(newVersion);
-    writeFileSync(filePath, newContent);
+    writeFileSync(stateFilePath, newContent);
     content = newContent;
     version = newVersion;
     subscriptions.emit({

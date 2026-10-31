@@ -1,7 +1,7 @@
 import { signature } from "@dldc/librsync";
 import { fileSyncTransportReader, type TFileSyncMessage } from "../shared/fileSync.ts";
 import { assertOk, UnauthorizedError } from "./errors.ts";
-import type { SanitizedAction } from "./opfs.ts";
+import type { SanitizedAction } from "./storage.ts";
 
 export interface ApiClient {
   /**

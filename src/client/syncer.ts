@@ -2,28 +2,28 @@ import { createQueue } from "../shared/queue.ts";
 import type { ApiClient } from "./api.ts";
 import type { Store } from "./store.ts";
 
-export interface SyncerParams<Action> {
+export interface SyncerParams {
   apiClient: ApiClient;
   clientId: string;
   signal: AbortSignal;
-  store: Store<Action>;
+  store: Store;
   onPatchError: (version: string, error: unknown) => void;
 }
 
-export function createSyncer<Action>({
+export function createSyncer({
   apiClient,
   clientId,
   signal,
   store,
   onPatchError,
-}: SyncerParams<Action>): void {
+}: SyncerParams): void {
   const applyPatchQueue = createQueue(signal);
 
   runSyncLoop();
   return;
 
   async function runSyncLoop(): Promise<void> {
-    for await (const message of apiClient.sync(signal, clientId, () => store.getServerContent())) {
+    for await (const message of apiClient.sync(signal, clientId, () => store.getServerState())) {
       if (message.name === "Connected") {
         continue;
       }

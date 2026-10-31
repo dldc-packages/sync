@@ -1,5 +1,5 @@
 export { assertOk, UnauthorizedError } from "./client/errors.ts";
-export type { SanitizedAction, SanitizedContext, StoredError } from "./client/opfs.ts";
+export type { SanitizedAction, SanitizedContext, StoredError } from "./client/storage.ts";
 export type { TWorkerInMessage, TWorkerOutMessage } from "./client/types.ts";
 export { createWorkerClient, forceServerReload, type WorkerClient } from "./client/workerClient.ts";
 export {
@@ -7,3 +7,10 @@ export {
   type TWorkerEngine,
   type TWorkerEngineParams,
 } from "./client/workerEngine.ts";
+export type {
+  TDerive,
+  TGetDerive,
+  TGetStoreReducer,
+  TStoreReducer,
+  TStoreReducerResult,
+} from "./shared/types.ts";

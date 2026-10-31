@@ -1,5 +1,6 @@
 export { createDeferred } from "./deferred.ts";
 export type { TDeferred } from "./deferred.ts";
+export { isDerivedResult, unwrapReducerState } from "./derived.ts";
 export { fileSyncTransportReader, fileSyncTransportWriter } from "./fileSync.ts";
 export type {
   TFileSyncMessage,
@@ -26,3 +27,4 @@ export type {
   TStreamWriter,
   UnionFromMap,
 } from "./stream.ts";
+export type { TDerive, TGetDerive, TStoreReducerResult } from "./types.ts";

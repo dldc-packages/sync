@@ -1,5 +1,5 @@
 import { createQueue } from "../shared/queue.ts";
-import type { OpfsClient, SanitizedAction } from "./opfs.ts";
+import type { SanitizedAction } from "./storage.ts";
 import type { Sender } from "./sender.ts";
 import type { Store } from "./store.ts";
 
@@ -8,23 +8,21 @@ export interface Dispatcher {
   refresh(): Promise<void>;
 }
 
-export interface DispatcherParams<Action> {
+export interface DispatcherParams {
   signal: AbortSignal;
-  store: Store<Action>;
+  store: Store;
   sender: Sender;
-  opfsClient: OpfsClient;
   onDispatchError: (error: unknown) => void;
   onDispatched: () => void;
 }
 
-export function createDispatcher<Action>({
+export function createDispatcher({
   signal,
   store,
   sender,
-  opfsClient,
   onDispatchError,
   onDispatched,
-}: DispatcherParams<Action>): Dispatcher {
+}: DispatcherParams): Dispatcher {
   const dispatchQueue = createQueue(signal);
 
   return {
@@ -35,10 +33,10 @@ export function createDispatcher<Action>({
   function dispatch(action: SanitizedAction, dispatchId?: number): Promise<boolean> {
     return dispatchQueue.run(async () => {
       try {
-        // Inside the lock: read state, generate TS, add to pending,
-        // check if DB changed (another tab), save state, return results.
-        const result = await opfsClient.dispatchInLock(action, store.getServerVersion());
-        store.applyDispatchResult(result, dispatchId);
+        // The store owns the OPFS lock: it mints the HLC timestamp, appends to
+        // the outbox, persists everything, and updates the local (optimistic)
+        // state in one transaction.
+        await store.dispatch(action, dispatchId);
         // Wake the sender to send the new action
         sender.wake();
         // Notify other tabs so they can refresh their in-memory state

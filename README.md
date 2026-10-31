@@ -29,6 +29,11 @@ reducer to produce the next version of the file. Each client keeps its own copy
 and applies the **same reducer locally** so the UI updates instantly, then
 reconciles with the server.
 
+The reducer may also be **derived-aware**: it receives the current *derived*
+value (see [Derived data](#derived-data-local-index--cache))
+as a 4th argument and returns `{ state, derived }` instead of `Uint8Array`. Plain
+reducers are unchanged.
+
 ### 2. Rsync over a live connection
 
 The server and each client exchange patches computed by
@@ -76,13 +81,15 @@ Requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`.
 
 ```ts
 import { createStore } from "@dldc/sync/server";
-import { reducer, restoreAction } from "./shared.ts";
+import { derive, reducer, restoreAction } from "./shared.ts";
 
 const store = await createStore({
-  stateDatabasePath: "./state.sqlite", // lib bookkeeping (last-applied, versions)
-  filePath: "./data.json", // YOUR app data file — read/written by the reducer
-  getReducer: async () => reducer,
+  metaFilePath: "./state.sqlite", // lib bookkeeping (last-applied, versions)
+  stateFilePath: "./data.json", // YOUR app data file — read/written by the reducer
+  derivedFilePath: "./data.derived", // derived index/cache
   restoreAction,
+  getReducer: async () => reducer,
+  getDerive: async () => derive,
 });
 
 // POST /api/client/:clientId/sync     -> long-lived rsync stream
@@ -90,7 +97,7 @@ const store = await createStore({
 ```
 
 `createStore` gives you `sync()` and `dispatch()` which you wire up to your HTTP
-framework. The `filePath` is your actual data (e.g. JSON); `stateDatabasePath`
+framework. The `stateFilePath` is your actual data (e.g. JSON); `metaFilePath`
 is a SQLite database (via `better-sqlite3`) used internally to track per-client
 last-applied timestamps and file versions across restarts.
 
@@ -98,6 +105,7 @@ last-applied timestamps and file versions across restarts.
 
 ```ts
 import type {
+  TDerive,
   TRestoreAction,
   TSanitizeAction,
   TStoreReducer,
@@ -116,6 +124,15 @@ const reducer: TStoreReducer<Action, Context> = (file, _ctx, action) => {
     : JSON.parse(new TextDecoder().decode(file));
   // ...apply action...
   return new TextEncoder().encode(JSON.stringify(state));
+};
+
+// Derived is always on (see the Derived section below). A plain reducer
+// is fine — `derive` recomputes the index whenever the server content changes.
+const derive: TDerive = (file) => {
+  const state = file.byteLength === 0
+    ? { todos: [] }
+    : JSON.parse(new TextDecoder().decode(file));
+  return new TextEncoder().encode(JSON.stringify({ count: state.todos.length }));
 };
 
 const restoreAction: TRestoreAction<Action> = (data) => data as Action;
@@ -141,14 +158,16 @@ const engine = createWorkerEngine<Action, Context>({
   emit: (message, transfer) => self.postMessage(message, transfer),
   close: () => self.close(),
   getReducer: async () => reducer,
+  getDerive: async () => derive,
   getContext: async () => ({}),
   syncPath: (id) => `/api/client/${id}/sync`,
   dispatchPath: (id) => `/api/client/${id}/dispatch`,
   restoreAction,
   sanitizeContext,
   restoreContext,
-  dbFileName: "data.json",
-  stateFileName: "state.json",
+  stateFileName: "data.json",
+  metaFileName: "meta.json",
+  derivedFileName: "data.derived",
   opfsLockName: "app-opfs",
   sendLockName: "app-dispatch",
   crossTabDispatchChannelName: "app-dispatch-notify",
@@ -215,12 +234,84 @@ worker.addEventListener("message", (event) => {
 });
 ```
 
+## Derived data (local index / cache)
+
+Beyond the synced file every app maintains a **derived** value — a second value,
+never synced, stored next to the state (its own OPFS file on the client, a file
+next to the state on the server) and fully re-derivable from the state. Typical
+use: an index or aggregate you don't want to rebuild from scratch on every
+change.
+
+```ts
+// shared.ts — a derived-aware reducer + a derive function
+const reducer: TStoreReducer<Action, Context> = (file, ctx, action, currentDerived) => {
+  const state = decode(file);
+  const index = decodeDerived(currentDerived);
+  // ...apply action to BOTH state and index...
+  return { state: encode(state), derived: encodeDerived(index) };
+};
+const derive: TDerive = (state, prevDerived) => { /* recompute the index from state */ };
+
+// client/worker.ts
+createWorkerEngine({
+  ...,
+  getDerive: () => Promise.resolve(derive),
+  derivedFileName: "data.derived", // OPFS file next to the state file
+});
+
+// server.ts
+createStore({
+  ...,
+  getDerive: () => Promise.resolve(derive),
+  derivedFilePath: "./data.derived", // file next to the state file
+});
+```
+
+On the main thread the derived rides along with every database snapshot:
+
+```ts
+client.subscribeDerived((bytes) => renderIndex(decodeDerived(bytes)));
+client.getDerived(); // latest derived — always a Uint8Array, never null
+```
+
+By default the engine includes `derived` in every `Ready`/`Database` message. The
+cost is one `slice()` copy per emission (~30 µs/MB — the `postMessage` transfer
+itself is O(1), zero-copy). For apps that only read the derived at startup (or
+keep a very large one), set `emitDerived: false` on the engine: the worker still
+computes and persists it, `onDerived` still fires in-process, and the main
+thread still receives the *initial* derived via `Ready` — but later snapshots
+arrive without a fresh one (`subscribeDerived` doesn't fire for them, and
+`getDerived()` keeps the last value, never null).
+
+**Semantics.**
+
+- `derive(state, prevDerived)` recomputes (or incrementally updates) the derived
+  for the *committed* server file. It runs on initial load and whenever the
+  server content changes. `prevDerived` is a hint so an index can diff instead
+  of rebuild — the result must match what the reducer chain produced.
+- The reducer maintains derived for optimistic (outbox) actions while they are
+  replayed on top of the server content, so the derived the main thread sees
+  always matches the state it sees. A reducer that only updates state returns
+  the raw file (derived unchanged); one that also maintains derived returns
+  `{ state, derived }`.
+- Storage follows the same rule as the state: the OPFS/server file holds the
+  derived for the committed server content, written only when the version
+  changes; outbox actions are re-applied in memory on startup — exactly how
+  `localContent` is rebuilt. A stale derived file is harmless: it is recomputed
+  from the state on every load.
+
+**Contract.** Both the client **and** the server must configure
+`getDerive` + `derivedFileName` / `derivedFilePath`, and `derive` must produce
+the same derived value as the reducer chain — otherwise the two sides could
+compute different states, since the reducer may use `currentDerived` to compute
+the next file.
+
 ## Features
 
 - **Real-time sync** via rsync delta patches over a live stream
 - **Optimistic UI** — clients apply the reducer locally before the server
   round-trip
-- **Offline-first** — pending actions persist in OPFS and flush when back online
+- **Offline-first** — outbox actions persist in OPFS and flush when back online
 - **Multi-tab** — a broadcast channel keeps tabs in sync
 - **Idempotent dispatch** — actions are deduped by hybrid logical clock (HLC)
   timestamp

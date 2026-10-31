@@ -100,7 +100,7 @@ client.subscribeDispatched((token) => {
 });
 
 client.subscribeDebugState((debug) => {
-  serverPending = debug.pendingCount;
+  serverPending = debug.outboxCount;
   if (serverPending === 0) {
     // Nothing left for the server to ack → everything applied is now synced.
     for (const entry of feed) {
