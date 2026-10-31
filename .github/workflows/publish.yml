@@ -12,7 +12,7 @@ jobs:
     if: startsWith(github.ref, 'refs/heads/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: voidzero-dev/setup-vp@v1.21.2
         with:
@@ -36,7 +36,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No `registry-url`: v1.21.2+ would write an empty auth token to .npmrc
       # and block the OIDC exchange. npm >= 11.5.1 performs the OIDC exchange
