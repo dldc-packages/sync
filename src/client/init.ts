@@ -44,6 +44,41 @@ export interface InitParams<Action, Context> {
   derivedFileName: string;
 }
 
+/**
+ * Throw a descriptive error when the current environment lacks an API the
+ * engine requires, before any storage/network work starts. Catches unsupported
+ * browsers, non-secure contexts and storage-blocking setups early — with a
+ * message the user can act on, instead of an opaque `TypeError` mid-startup.
+ *
+ * Required: OPFS (secure context + modern browser), Web Locks, BroadcastChannel
+ * and `crypto.randomUUID`.
+ */
+export function checkCapabilities(): void {
+  const missing: string[] = [];
+  if (typeof isSecureContext === "boolean" && !isSecureContext) {
+    missing.push("a secure context (HTTPS or localhost)");
+  }
+  if (typeof navigator === "undefined" || typeof navigator.storage?.getDirectory !== "function") {
+    missing.push("the Origin Private File System (navigator.storage.getDirectory)");
+  }
+  if (typeof navigator.locks?.request !== "function") {
+    missing.push("the Web Locks API (navigator.locks.request)");
+  }
+  if (typeof BroadcastChannel !== "function") {
+    missing.push("BroadcastChannel");
+  }
+  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
+    missing.push("crypto.randomUUID");
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `@dldc/sync cannot run in this environment: it does not provide ${missing.join(", ")}. ` +
+        "The client needs a secure context with a modern browser " +
+        "(Chrome 86+, Firefox 111+, Safari 15.2+).",
+    );
+  }
+}
+
 export async function init<Action, Context>({
   onNoContextError,
   onUnauthorized,
@@ -57,6 +92,8 @@ export async function init<Action, Context>({
   opfsLockName,
   derivedFileName,
 }: InitParams<Action, Context>): Promise<EngineInit<Action, Context> | null> {
+  checkCapabilities();
+
   const storage = createStorage({
     stateFileName,
     metaFileName,

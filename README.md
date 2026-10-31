@@ -180,6 +180,13 @@ self.addEventListener("message", (event) => engine.receive(event.data));
 engine.start();
 ```
 
+The engine takes two optional network options applied to every HTTP request
+(both the sync stream and action dispatches):
+`headers` forwards extra headers verbatim (auth tokens, custom content types),
+and `credentials` forces the `credentials` mode — set `credentials: "include"`
+when your API is on another origin and needs cookies (the sync stream otherwise
+defaults to `same-origin` while dispatch sends `include`).
+
 ```ts
 // main.ts
 import { createWorkerClient } from "@dldc/sync/client";

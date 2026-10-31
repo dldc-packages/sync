@@ -47,6 +47,19 @@ export interface TWorkerEngineParams<Action, Context> {
   crossTabDispatchChannelName: string;
   stateFileName: string;
   dispatchPath: (clientId: string) => string;
+  /**
+   * Extra headers sent with every HTTP request to the API (both the sync
+   * stream and action dispatches) — auth tokens, custom content types, etc.
+   * Forwarded verbatim to `fetch`; nothing is added unless you set it.
+   */
+  headers?: HeadersInit;
+  /**
+   * `credentials` mode for every HTTP request. Defaults to the browser's
+   * `same-origin` for the sync stream and `include` for dispatch; set it here
+   * to force the same mode on both (e.g. `"include"` for a cross-origin API
+   * that needs cookies).
+   */
+  credentials?: RequestCredentials;
   getContext: TGetContext<Context>;
   getContextTimeoutMs: number;
   getReducer: TGetStoreReducer<Action, Context>;
@@ -97,6 +110,8 @@ export function createWorkerEngine<Action, Context>({
   crossTabDispatchChannelName,
   stateFileName,
   dispatchPath,
+  headers,
+  credentials,
   getContext,
   getContextTimeoutMs,
   getReducer,
@@ -249,6 +264,8 @@ export function createWorkerEngine<Action, Context>({
     const apiClient = createApiClient({
       syncPath,
       dispatchPath,
+      headers,
+      credentials,
       reconnectBaseDelay,
       reconnectMaxDelay,
       onUnauthorized: handleSessionExpired,

@@ -1,7 +1,7 @@
 export { type ApiClient, type ApiClientParams, createApiClient } from "./api.ts";
 export { createDispatcher, type Dispatcher, type DispatcherParams } from "./dispatcher.ts";
 export { assertOk, UnauthorizedError } from "./errors.ts";
-export { init, type InitParams } from "./init.ts";
+export { checkCapabilities, init, type InitParams } from "./init.ts";
 export { createOutboxStore, type OutboxStore, type SetOutboxResult } from "./outbox.ts";
 export { createSender, type Sender, type SenderParams } from "./sender.ts";
 export {

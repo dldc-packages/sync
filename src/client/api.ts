@@ -28,6 +28,19 @@ export interface ApiClientParams {
   syncPath: (clientId: string) => string;
   dispatchPath: (clientId: string) => string;
   onUnauthorized: () => void;
+  /**
+   * Extra headers sent with every request — both the sync stream and action
+   * dispatches. Whatever your API needs: auth tokens, custom `Content-Type`,
+   * … Applied on top of the fetch defaults; nothing is added unless you
+   * provide it.
+   */
+  headers?: HeadersInit;
+  /**
+   * `credentials` mode applied to every request. Defaults differ per request
+   * (see `sync`/`dispatchAction`); set it to force the same mode on both —
+   * e.g. `"include"` when the API is on another origin and needs cookies.
+   */
+  credentials?: RequestCredentials;
 }
 
 const RECONNECT_BASE_DELAY = 1000;
@@ -39,6 +52,8 @@ export function createApiClient({
   syncPath,
   dispatchPath,
   onUnauthorized,
+  headers,
+  credentials,
 }: ApiClientParams): ApiClient {
   return {
     sync,
@@ -58,6 +73,8 @@ export function createApiClient({
             const res = await fetch(syncPath(clientId), {
               signal,
               method: "POST",
+              headers,
+              credentials,
               body: signature(getContent(), 512).buffer,
             });
             assertOk(res);
@@ -107,8 +124,9 @@ export function createApiClient({
   ): Promise<void> {
     const res = await fetch(dispatchPath(clientId), {
       method: "POST",
+      headers,
+      credentials: credentials,
       body: JSON.stringify({ action: action._action, ts }),
-      credentials: "include",
     });
     assertOk(res);
   }

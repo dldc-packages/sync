@@ -92,29 +92,44 @@ export function createStorage({
     try {
       const size = accessHandle.getSize();
       if (size === 0) {
-        const newMeta: Bookkeeping = {
-          clientId: crypto.randomUUID(),
-          hlc: null,
-          outbox: [],
-          errors: [],
-          serverVersion: null,
-          context: null,
-        };
         // Persist the new meta immediately so clientId is saved
+        const newMeta = createFreshMeta();
         writeMetaAt(accessHandle, newMeta);
         return newMeta;
       }
-      const bytes = new Uint8Array(size);
-      accessHandle.read(bytes, { at: 0 });
-      const restored = JSON.parse(new TextDecoder().decode(bytes)) as Bookkeeping;
-      return {
-        ...restored,
-        context: restored.context ?? null,
-        errors: restored.errors ?? [],
-      };
+      try {
+        const bytes = new Uint8Array(size);
+        accessHandle.read(bytes, { at: 0 });
+        const restored = JSON.parse(new TextDecoder().decode(bytes)) as Bookkeeping;
+        return {
+          ...restored,
+          context: restored.context ?? null,
+          errors: restored.errors ?? [],
+        };
+      } catch {
+        // Corrupted or foreign meta (interrupted write, quota failure mid-flush,
+        // eviction, …): start fresh instead of failing every startup forever.
+        console.warn(
+          `[storage] Corrupted meta file "${metaFileName}", starting with fresh bookkeeping`,
+        );
+        const newMeta = createFreshMeta();
+        writeMetaAt(accessHandle, newMeta);
+        return newMeta;
+      }
     } finally {
       accessHandle.close();
     }
+  }
+
+  function createFreshMeta(): Bookkeeping {
+    return {
+      clientId: crypto.randomUUID(),
+      hlc: null,
+      outbox: [],
+      errors: [],
+      serverVersion: null,
+      context: null,
+    };
   }
 
   async function writeMeta(meta: Bookkeeping): Promise<void> {
