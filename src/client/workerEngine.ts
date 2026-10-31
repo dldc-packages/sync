@@ -140,7 +140,7 @@ export function createWorkerEngine<Action, Context>({
   function start(): void {
     main().catch((err) => {
       console.error(err);
-      handleError(null, "Startup", err);
+      void handleError(null, "Startup", err);
     });
   }
 
@@ -213,7 +213,7 @@ export function createWorkerEngine<Action, Context>({
       getReducer,
       getDerive,
       onNoContextError: () => {
-        handleError(null, "Startup", "No context available");
+        void handleError(null, "Startup", "No context available");
       },
       onUnauthorized: handleSessionExpired,
       getContext,
@@ -291,7 +291,7 @@ export function createWorkerEngine<Action, Context>({
       signal: syncController.signal,
       sendLockName,
       onExhausted: (action) => {
-        handleError(
+        void handleError(
           store,
           "Send",
           `Failed to send action after retries (ts: ${action.ts})`,
@@ -307,7 +307,7 @@ export function createWorkerEngine<Action, Context>({
       store,
       apiClient,
       onPatchError: (version, error) => {
-        handleError(store, "Sync", error, version);
+        void handleError(store, "Sync", error, version);
       },
     });
 
@@ -318,7 +318,7 @@ export function createWorkerEngine<Action, Context>({
       sender,
       signal: syncController.signal,
       onDispatchError: (error: unknown) => {
-        handleError(store, "Dispatch", error);
+        void handleError(store, "Dispatch", error);
       },
       onDispatched: () => {
         broadcastChannel.postMessage("dispatch");
@@ -326,7 +326,7 @@ export function createWorkerEngine<Action, Context>({
     });
 
     broadcastChannel.onmessage = () => {
-      dispatcher.refresh();
+      void dispatcher.refresh();
     };
 
     receiveMessage = (message: TWorkerInMessage) => {
@@ -353,28 +353,33 @@ export function createWorkerEngine<Action, Context>({
         return;
       }
       if (message.kind === "ClearError") {
-        store.clearError(message.id).then(updateDebugState);
+        void store.clearError(message.id).then(updateDebugState);
         return;
       }
       if (message.kind === "ClearAllErrors") {
-        store.clearAllErrors().then(updateDebugState);
+        void store.clearAllErrors().then(updateDebugState);
         return;
       }
       if (message.kind === "Refresh") {
-        store.refresh().then(() => {
+        void store.refresh().then(() => {
           sendMessage({ kind: "Reload" });
         });
         return;
       }
       if (message.kind === "ForceRefresh") {
-        store.forceRefresh().then(() => {
+        void store.forceRefresh().then(() => {
           sendMessage({ kind: "Reload" });
         });
+        return;
+      }
+      if (message.kind === "ForceRecomputeDerived") {
+        void store.forceRecomputeDerived();
         return;
       }
       // Unknown kinds are ignored. This keeps the protocol open: an app sharing
       // this worker handles its own `{ kind }` messages in its own event
       // listeners.
+      message satisfies never;
     };
 
     // Emit the initial content to the in-process hooks (the store's onState

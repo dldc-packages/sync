@@ -40,6 +40,17 @@ export interface WorkerClient<Action, Context> {
   clearAllErrors(): void;
   refresh(): void;
   forceRefresh(): void;
+  /**
+   * Ask the worker to recompute the derived value from the committed server
+   * content, ignoring the current one — `derive` is re-run with an empty
+   * previous value so it fully rebuilds instead of diffing incrementally.
+   *
+   * Use it after a `derive` schema/format change or when the persisted derived
+   * has drifted on the worker side. Fire-and-forget like `refresh`: when the
+   * recomputed value is ready, a new database + derived snapshot is delivered,
+   * so `subscribeDerived` fires and `getDerived()` returns the fresh value.
+   */
+  forceRecomputeDerived(): void;
   stop(): void;
   /**
    * Feed a worker→main message into the client. The host wires this to the
@@ -106,6 +117,7 @@ export function createWorkerClient<Action, Context>({
     clearAllErrors,
     refresh,
     forceRefresh,
+    forceRecomputeDerived,
     stop,
     receive,
   };
@@ -224,6 +236,10 @@ export function createWorkerClient<Action, Context>({
     sendMessage({ kind: "ForceRefresh" });
   }
 
+  function forceRecomputeDerived(): void {
+    sendMessage({ kind: "ForceRecomputeDerived" });
+  }
+
   function sendMessage(message: TWorkerInMessage): void {
     emit(message);
   }
@@ -325,7 +341,7 @@ export function createWorkerClient<Action, Context>({
     }
     if (message.kind === "SessionExpired") {
       rejectAllPendingDispatches(new Error("Session expired before dispatch was applied"));
-      forceServerReload();
+      void forceServerReload();
       return;
     }
     // Unknown kinds are ignored. This keeps the protocol open: an app sharing

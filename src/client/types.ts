@@ -6,7 +6,8 @@ export type TWorkerInMessage =
   | { kind: "ClearError"; id: string }
   | { kind: "ClearAllErrors" }
   | { kind: "Refresh" }
-  | { kind: "ForceRefresh" };
+  | { kind: "ForceRefresh" }
+  | { kind: "ForceRecomputeDerived" };
 
 export type TWorkerOutMessage =
   | {

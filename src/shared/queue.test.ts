@@ -47,10 +47,10 @@ test("createQueue does not block subsequent tasks after a failure", async () => 
 
 test("createQueue end resolves when all queued tasks settle", async () => {
   const queue = createQueue();
-  queue.run(async () => {
+  void queue.run(async () => {
     await delay(10);
   });
-  queue.run(async () => {
+  void queue.run(async () => {
     await delay(10);
   });
   await queue.end();

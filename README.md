@@ -274,6 +274,22 @@ client.subscribeDerived((bytes) => renderIndex(decodeDerived(bytes)));
 client.getDerived(); // latest derived — always a Uint8Array, never null
 ```
 
+To force a full rebuild on demand — after a `derive` schema/format change, or when the
+persisted derived has drifted and no content change will self-heal it — ask the worker
+to re-run `derive` with an empty previous value (ignoring the current one):
+
+```ts
+client.forceRecomputeDerived(); // derive() re-runs from scratch, then a fresh
+                                // database + derived snapshot is delivered
+```
+
+`derive` normally receives the saved derived as a diff hint (`prevDerived`); forcing
+passes an empty hint so an incremental `derive` must recompute entirely from the state
+(like `client.forceRefresh()`, only it touches the derived alone — nothing is deleted
+and no reload happens). The rebuilt value is persisted next to the state, then the new
+live derived (with the outbox replayed on top) is delivered through the normal
+`subscribeDatabase` / `subscribeDerived` path.
+
 By default the engine includes `derived` in every `Ready`/`Database` message. The
 cost is one `slice()` copy per emission (~30 µs/MB — the `postMessage` transfer
 itself is O(1), zero-copy). For apps that only read the derived at startup (or

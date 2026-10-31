@@ -15,6 +15,14 @@ import type {
 } from "./storage.ts";
 import type { OutboxAction } from "./types.ts";
 
+/**
+ * The "no previous value" base passed to `derive` on a forced rebuild, so an
+ * incremental `derive` cannot lean on its saved hint and must recompute the
+ * derived from the state alone. Matches what `readDerived` returns for a
+ * missing/empty derived file at boot.
+ */
+const EMPTY_DERIVED = new Uint8Array(0);
+
 /** A lock acquisition function. Defaults to `navigator.locks` (see `lock.ts`). */
 export type Lock = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 
@@ -68,6 +76,7 @@ export interface Store {
   clearAllErrors(): Promise<TDebugState>;
   refresh(): Promise<TDebugState>;
   forceRefresh(): Promise<TDebugState>;
+  forceRecomputeDerived(): Promise<void>;
 }
 
 export interface StoreParams<Action, Context> {
@@ -132,6 +141,7 @@ export function createStore<Action, Context>({
     clearAllErrors,
     refresh,
     forceRefresh,
+    forceRecomputeDerived,
     getServerState: () => serverState,
     getState: () => localState,
     getServerVersion: () => serverVersion,
@@ -377,6 +387,38 @@ export function createStore<Action, Context>({
         errors: meta.errors,
       };
     });
+  }
+
+  /**
+   * Force-recompute the derived value for the committed server content,
+   * ignoring the current one.
+   *
+   * Unlike the incremental path (`persistDerived`), this hands `derive` an
+   * empty previous value so it must rebuild from the state instead of diffing
+   * against the saved derived. Use it after a `derive` schema/format change or
+   * when the persisted derived has drifted and no content change will
+   * self-heal it.
+   *
+   * Runs under the OPFS lock so the db + derived pair on disk stays consistent.
+   * If another tab has advanced the committed content since our last refresh,
+   * that fresh db is derived from (and adopted) instead of our stale mirror.
+   */
+  async function forceRecomputeDerived(): Promise<void> {
+    const result = await runInLock(async () => {
+      const meta = await storage.readMeta();
+      const serverContent =
+        meta.serverVersion !== serverVersion ? await storage.readDb() : serverState;
+      serverDerived = derive(serverContent, EMPTY_DERIVED);
+      await storage.writeDerived(serverDerived);
+      return {
+        serverContent,
+        serverVersion: meta.serverVersion ?? "",
+        outbox: meta.outbox,
+      };
+    });
+    // Full rebase of the outbox on top of the freshly derived committed value,
+    // then emit the new live state + derived to the main thread.
+    applyStateChange(result.serverContent, result.serverVersion, result.outbox);
   }
 
   /**

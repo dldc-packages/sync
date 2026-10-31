@@ -97,7 +97,7 @@ function renderSummary(derived: TodoDerived): void {
   summary.textContent = `${derived.open} open · ${derived.done} done · ${derived.total} total`;
 }
 
-client.ready().then(() => {
+void client.ready().then(() => {
   (window as any).__syncReady = true;
   (window as any).__client = client;
   render(decodeDatabase(client.getDatabase()));

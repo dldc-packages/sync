@@ -19,7 +19,7 @@ export function createSyncer({
 }: SyncerParams): void {
   const applyPatchQueue = createQueue(signal);
 
-  runSyncLoop();
+  void runSyncLoop();
   return;
 
   async function runSyncLoop(): Promise<void> {

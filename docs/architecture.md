@@ -192,6 +192,15 @@ the server acknowledges them through the sync channel.
      the derived for the new content in the same lock.
 3. Rebuild `local*` by rebasing the remaining outbox, and emit.
 
+### Force recompute derived
+
+`client.forceRecomputeDerived()` posts a `ForceRecomputeDerived` message → the store
+runs `derive` with an **empty** previous value (ignoring the persisted one), so an
+incremental `derive` rebuilds from the state instead of diffing. Under the lock it
+persists the fresh derived next to the db, then rebases the outbox on top and emits a
+new `Database` (+ derived) snapshot. Used after a `derive` schema change or a stale
+derived file.
+
 ## Cross-tab consistency, in one place
 
 How parallel tabs stay consistent:

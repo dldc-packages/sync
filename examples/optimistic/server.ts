@@ -34,7 +34,7 @@ const store = await createStore({
 });
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-  readBody(req).then(async (body) => {
+  void readBody(req).then(async (body) => {
     try {
       // Abort the sync stream when the client disconnects (like req.signal on
       // the Web platform).

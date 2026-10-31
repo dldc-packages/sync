@@ -43,6 +43,19 @@ const rebuildDerive: TDerive = (file) => {
   return encode<TestDerived>({ done: state.items.filter((i) => i.done).length });
 };
 
+/**
+ * Derive that trusts a non-empty `prevDerived` and only recomputes from the
+ * state when given an empty hint — simulates an incremental derive holding a
+ * stale value that content changes alone never self-heal.
+ */
+const stickyDerive: TDerive = (file, prevDerived) => {
+  if (prevDerived.byteLength > 0) {
+    return prevDerived;
+  }
+  const state = decode<TestState>(file, { items: [] });
+  return encode<TestDerived>({ done: state.items.filter((i) => i.done).length });
+};
+
 /** Non-derived-aware reducer: returns only the next state. */
 const plainReducer: TStoreReducer<Action, Context> = (file, _ctx, action) => {
   const state = decode<TestState>(file, { items: [] });
@@ -360,5 +373,58 @@ describe("createStore (owns the OPFS lock)", () => {
     expect(decodeDone(store.getDerived())).toBe(1);
     // derived for the new server content was computed and persisted
     expect(derivedWrites.length).toBeGreaterThan(0);
+  });
+
+  it("forceRecomputeDerived rebuilds the derived from scratch, ignoring the current value", async () => {
+    const state = encode<TestState>({
+      items: [
+        { id: "a", done: true },
+        { id: "b", done: true },
+      ],
+    });
+    const stale = encode<TestDerived>({ done: 99 });
+    const outboxAction = sanitizedOf({ kind: "toggle", id: "a" }, 1);
+    const fake = createStorageMock({
+      db: state,
+      serverVersion: "s0",
+      outbox: [outboxAction],
+      derived: stale,
+    });
+    const snapshots: Array<{ content: Uint8Array; derived: Uint8Array }> = [];
+    const store = createStore<Action, Context>({
+      context: {},
+      initialServerVersion: "s0",
+      // an optimistic toggle on a -> the live derived diverges from the committed one
+      initialOutbox: [outboxAction],
+      initialState: state,
+      initialDerived: stale,
+      storage: fake.storage,
+      opfsLockName: "test-lock",
+      lock: passThroughLock,
+      maxStoredErrors: 20,
+      restoreAction: (data) => data as Action,
+      reducer: derivedReducer,
+      derive: stickyDerive,
+      onState: (content, derived) => snapshots.push({ content, derived }),
+      onStateChange: () => {},
+    });
+
+    // boot: stickyDerive trusts the stale hint (99) and the outbox toggle
+    // brings the live derived down to 98 — nothing self-heals
+    expect(decodeDone(store.getDerived())).toBe(98);
+
+    await store.forceRecomputeDerived();
+
+    // derived rebuilt from the state: 2 done on the server, minus the
+    // optimistic toggle on a replayed on top = 1
+    expect(decodeDone(store.getDerived())).toBe(1);
+    const local = decode<TestState>(store.getState(), { items: [] });
+    expect(local.items.find((i) => i.id === "a")!.done).toBe(false);
+    // the persisted file only holds the committed derived (2), not the replay
+    expect(fake.derivedWrites.at(-1)).toBeDefined();
+    expect(decodeDone(fake.derivedWrites.at(-1)!)).toBe(2);
+    // the snapshot delivered to the subscribers carries the fresh live derived
+    const last = snapshots.at(-1)!;
+    expect(decodeDone(last.derived)).toBe(1);
   });
 });

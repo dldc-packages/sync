@@ -60,7 +60,7 @@ export function createSender({
   function wake(): void {
     if (loopRunning || signal.aborted) return;
     loopRunning = true;
-    sendLoop();
+    void sendLoop();
   }
 
   async function sendLoop(): Promise<void> {
