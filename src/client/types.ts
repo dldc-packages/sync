@@ -27,7 +27,14 @@ export type TWorkerOutMessage =
   | { kind: "Dispatched"; id: number; ok: boolean }
   | { kind: "DebugState"; outboxCount: number; errors: StoredError[] }
   | { kind: "Reload" }
-  | { kind: "SessionExpired" };
+  | { kind: "SessionExpired" }
+  /**
+   * The worker failed to initialize and will never post `Ready`. Sent when
+   * startup throws or when it aborts without a context. The main thread's
+   * `ready()` rejects (instead of hanging forever) when it receives this, or
+   * when it receives `SessionExpired` before being ready.
+   */
+  | { kind: "InitFailed"; error: string };
 
 /** One entry of the outbox, restored to the app's `Action` type. */
 export interface OutboxAction<Action> {

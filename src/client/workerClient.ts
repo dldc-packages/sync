@@ -5,6 +5,11 @@ import type { TDebugState } from "./storage.ts";
 import type { TWorkerInMessage, TWorkerOutMessage } from "./types.ts";
 
 export interface WorkerClient<Action, Context> {
+  /**
+   * Resolves once the worker is initialized and the first snapshot is
+   * delivered. Rejects if the worker fails to start (e.g. no context, an
+   * expired session during startup, or a startup error) instead of hanging.
+   */
   ready(): Promise<void>;
   subscribeState(callback: TSubscriptionCallback<Uint8Array>): TUnsubscribe;
   /**
@@ -165,6 +170,7 @@ export function createWorkerClient<Action, Context>({
   }
 
   function stop(): void {
+    failReady(new Error("Worker stopped"));
     rejectAllPendingDispatches(new Error("Worker stopped"));
     sendMessage({ kind: "Terminate" });
   }
@@ -218,6 +224,18 @@ export function createWorkerClient<Action, Context>({
   function rejectAllPendingDispatches(reason: unknown): void {
     for (const { reject } of pendingDispatches.values()) reject(reason);
     pendingDispatches.clear();
+  }
+
+  /**
+   * Reject the `ready()` promise. Called when the worker can never become
+   * ready (startup failure, session expired during startup, explicit stop).
+   * Unlike the `Ready` handler we don't null `isReady`: once ready() has been
+   * failed it must keep rejecting on every call, not resolve.
+   */
+  function failReady(reason: unknown): void {
+    if (isReady !== null) {
+      isReady.reject(reason);
+    }
   }
 
   function clearError(id: string): void {
@@ -340,8 +358,15 @@ export function createWorkerClient<Action, Context>({
       return;
     }
     if (message.kind === "SessionExpired") {
+      failReady(new Error("Session expired before the worker became ready"));
       rejectAllPendingDispatches(new Error("Session expired before dispatch was applied"));
       void forceServerReload();
+      return;
+    }
+    if (message.kind === "InitFailed") {
+      // The worker will never be Ready (e.g. no context, or startup threw).
+      // Reject ready() so callers awaiting it don't hang forever.
+      failReady(new Error(`Worker failed to initialize: ${message.error}`));
       return;
     }
     // Unknown kinds are ignored. This keeps the protocol open: an app sharing

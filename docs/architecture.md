@@ -156,7 +156,10 @@ This is why the reducer must be derived-aware. For an empty outbox,
    recomputed; the saved file is just a hint/diff base.
 3. `initialLocal = rebase(state, outbox, serverDerived)`.
 4. The worker posts `Ready` (state + derived) to the main thread; derived
-   rides along so a fresh tab is immediately consistent.
+   rides along so a fresh tab is immediately consistent. If startup fails
+   instead (no context, or the session expired during `getContext`), the worker
+   never posts `Ready`; it posts `SessionExpired` (with a reload) and/or
+   `InitFailed`, so the main thread's `ready()` rejects rather than hanging.
 
 ### Dispatch (optimistic)
 

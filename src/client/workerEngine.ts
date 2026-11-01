@@ -156,6 +156,18 @@ export function createWorkerEngine<Action, Context>({
     main().catch((err) => {
       console.error(err);
       void handleError(null, "Startup", err);
+      sendInitFailed(err);
+    });
+  }
+
+  /**
+   * Startup failed and the worker will never post `Ready` — tell the main
+   * thread so its `ready()` promise rejects (instead of hanging forever).
+   */
+  function sendInitFailed(err: unknown): void {
+    sendMessage({
+      kind: "InitFailed",
+      error: err instanceof Error ? err.message : String(err),
     });
   }
 
@@ -239,7 +251,19 @@ export function createWorkerEngine<Action, Context>({
       opfsLockName,
       derivedFileName,
     });
-    if (!initState || syncController.signal.aborted) {
+    if (!initState) {
+      // Init aborted before producing a Ready. Two ways here:
+      // - Unauthorized context: handleSessionExpired already aborted the
+      //   controller and sent `SessionExpired` to the main thread.
+      // - No context available: nothing was sent yet.
+      // Either way the worker will never be Ready, so settle the main thread's
+      // ready() with a failure instead of letting it hang forever.
+      if (!syncController.signal.aborted) {
+        sendInitFailed(new Error("No context available"));
+      }
+      return;
+    }
+    if (syncController.signal.aborted) {
       return;
     }
 
