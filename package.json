@@ -1,6 +1,6 @@
 {
   "name": "@dldc/sync",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Sync a single file between a server and multiple clients (rsync over HTTP + OPFS)",
   "keywords": [],
   "homepage": "https://github.com/dldc-packages/sync#readme",
