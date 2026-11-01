@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: voidzero-dev/setup-vp@v1.21.2
+      - uses: voidzero-dev/setup-vp@v1.22.0
         with:
           cache: true
 
@@ -41,7 +41,7 @@ jobs:
       # No `registry-url`: v1.21.2+ would write an empty auth token to .npmrc
       # and block the OIDC exchange. npm >= 11.5.1 performs the OIDC exchange
       # automatically when NODE_AUTH_TOKEN is absent. cache is off for releases.
-      - uses: voidzero-dev/setup-vp@v1.21.2
+      - uses: voidzero-dev/setup-vp@v1.22.0
         with:
           cache: false
 
